@@ -21,7 +21,7 @@ import os
 import re
 import time
 from contextlib import asynccontextmanager
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import asyncpg
 import redis.asyncio as redis
@@ -441,13 +441,16 @@ AGENT_COLUMNS = {
 AGENT_NOT_NULL = AGENT_COLUMNS - {"model_provider", "model_name"}
 
 
+AGENT_SHAPES = ["circle", "rounded", "square", "star", "cloud", "moon", "heart", "hex", "diamond", "triangle", "shield", "flower", "blob", "drop", "pentagon", "octagon", "oval", "leaf", "bubble", "sparkle", "ghost", "squircle"]
+
+
 def validate_agent(data):
     if data.get("color") is not None:
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", data["color"]):
             raise HTTPException(400, "Geçersiz renk kodu")
 
     if data.get("shape") is not None:
-        if data["shape"] not in ["circle", "rounded", "hex", "diamond", "triangle"]:
+        if data["shape"] not in AGENT_SHAPES:
             raise HTTPException(400, "Geçersiz avatar şekli")
 
     if "status" in data and data["status"] not in ["active", "paused"]:
@@ -964,6 +967,168 @@ async def passkey_login_verify(data: PasskeyFinish, request: Request):
 class ChatInput(BaseModel):
     message: str = ""
     conversation_id: str = "cerybro-ceo"
+    attachment_ids: List[str] = Field(default_factory=list, max_length=10)
+
+
+# ------------------------------------------------------------------ EKLER
+UPLOAD_DIR = os.getenv("CERYBRO_UPLOAD_DIR", "/data/uploads")
+_IMG_EXT = {"jpg", "jpeg", "png", "gif", "webp", "heic", "heif"}
+_DOC_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "csv"}
+_VID_EXT = {"mp4", "mov", "webm", "3gp", "m4v", "mkv"}
+_LIMITS = {"image": 25 * 1024 * 1024, "document": 25 * 1024 * 1024, "video": 100 * 1024 * 1024}
+_VISION_MIME = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+
+
+async def _ensure_attachments(conn=None):
+    await (conn or db_pool).execute("""
+        CREATE TABLE IF NOT EXISTS cerybro_attachments (
+            id UUID PRIMARY KEY,
+            conversation_id VARCHAR(100),
+            message_id BIGINT REFERENCES cerybro_chat_messages(id) ON DELETE SET NULL,
+            kind VARCHAR(10) NOT NULL,
+            filename VARCHAR(255) NOT NULL,
+            ext VARCHAR(10) NOT NULL,
+            mime VARCHAR(120),
+            size_bytes BIGINT NOT NULL,
+            extracted_text TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )""")
+
+
+def _kind_for(ext):
+    if ext in _IMG_EXT:
+        return "image"
+    if ext in _DOC_EXT:
+        return "document"
+    if ext in _VID_EXT:
+        return "video"
+    return None
+
+
+def _extract_text(path, ext):
+    try:
+        if ext in ("txt", "csv"):
+            with open(path, "rb") as f:
+                return f.read(400_000).decode("utf-8", "replace")
+        if ext == "pdf":
+            from pypdf import PdfReader
+            r = PdfReader(path)
+            return "\n".join((p.extract_text() or "") for p in r.pages[:60])
+        if ext == "docx":
+            import docx
+            d = docx.Document(path)
+            parts = [p.text for p in d.paragraphs]
+            for t in d.tables:
+                for row in t.rows:
+                    parts.append(" | ".join(c.text for c in row.cells))
+            return "\n".join(parts)
+        if ext == "xlsx":
+            import openpyxl
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            out = []
+            for ws in wb.worksheets[:5]:
+                out.append("# " + ws.title)
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i > 500:
+                        break
+                    out.append(",".join("" if v is None else str(v) for v in row))
+            return "\n".join(out)
+    except Exception as exc:
+        return "[Metin çıkarılamadı: " + type(exc).__name__ + "]"
+    return None
+
+
+@app.post("/api/uploads")
+async def upload_attachment(request: Request, filename: str, conversation_id: str = "cerybro-ceo"):
+    import uuid, re as _re, asyncio
+    name = _re.sub(r"[^\w.\- ()]", "_", os.path.basename(filename or ""))[:200] or "dosya"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    kind = _kind_for(ext)
+    if not kind:
+        raise HTTPException(415, "Desteklenmeyen dosya türü")
+    limit = _LIMITS[kind]
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > limit:
+        raise HTTPException(413, "Dosya çok büyük")
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    fid = uuid.uuid4()
+    path = os.path.join(UPLOAD_DIR, str(fid) + "." + ext)
+    size = 0
+    try:
+        with open(path, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(413, "Dosya çok büyük")
+                f.write(chunk)
+    except BaseException:
+        if os.path.exists(path):
+            os.remove(path)
+        raise
+    if size == 0:
+        os.remove(path)
+        raise HTTPException(400, "Boş dosya")
+    text = None
+    if kind == "document":
+        text = await asyncio.to_thread(_extract_text, path, ext)
+    await _ensure_attachments()
+    await db_pool.execute("""INSERT INTO cerybro_attachments
+        (id, conversation_id, kind, filename, ext, mime, size_bytes, extracted_text)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""", fid, conversation_id[:100], kind, name, ext,
+        (request.headers.get("content-type") or "")[:120], size, text)
+    return {"id": str(fid), "kind": kind, "filename": name, "size": size,
+            "text_chars": len(text or "")}
+
+
+@app.get("/api/uploads/{fid}")
+async def get_attachment(fid: str):
+    import uuid
+    from fastapi.responses import FileResponse
+    try:
+        u = uuid.UUID(fid)
+    except ValueError:
+        raise HTTPException(404, "Bulunamadı")
+    await _ensure_attachments()
+    r = await db_pool.fetchrow("SELECT * FROM cerybro_attachments WHERE id=$1", u)
+    if not r:
+        raise HTTPException(404, "Bulunamadı")
+    return FileResponse(os.path.join(UPLOAD_DIR, str(u) + "." + r["ext"]),
+                        filename=r["filename"], media_type=_VISION_MIME.get(r["ext"]) or None)
+
+
+async def _attachment_context(ids):
+    import uuid, base64, asyncio
+    if not ids:
+        return [], [], []
+    await _ensure_attachments()
+    uu = []
+    for i in ids[:10]:
+        try:
+            uu.append(uuid.UUID(str(i)))
+        except ValueError:
+            raise HTTPException(400, "Geçersiz ek kimliği")
+    rows = await db_pool.fetch("SELECT * FROM cerybro_attachments WHERE id = ANY($1::uuid[])", uu)
+    if len(rows) != len(uu):
+        raise HTTPException(400, "Ek bulunamadı")
+    parts, notes = [], []
+    for r in rows:
+        p = os.path.join(UPLOAD_DIR, str(r["id"]) + "." + r["ext"])
+        if r["kind"] == "image" and r["ext"] in _VISION_MIME:
+            data = await asyncio.to_thread(lambda: open(p, "rb").read())
+            parts.append({"type": "image_url", "image_url": {
+                "url": "data:" + _VISION_MIME[r["ext"]] + ";base64," + base64.b64encode(data).decode()}})
+            notes.append("[Görsel eklendi: " + r["filename"] + "]")
+        elif r["kind"] == "image":
+            notes.append("[Görsel eklendi (" + r["ext"] + " biçimi modele iletilemedi): " + r["filename"] + "]")
+        elif r["kind"] == "document":
+            t = (r["extracted_text"] or "").strip()
+            notes.append("[Belge eklendi: " + r["filename"] + "]")
+            parts.append({"type": "text", "text": "--- Belge: " + r["filename"] + " ---\n" +
+                          (t[:40000] if t else "(Bu belgeden metin çıkarılamadı.)") + "\n--- Belge sonu ---"})
+        else:
+            notes.append("[Video eklendi: " + r["filename"] + " (" + str(round(r["size_bytes"] / 1048576, 1)) +
+                         " MB). Video sunucuda saklandı; içeriği modele aktarılmadı.]")
+    return parts, notes, uu
 
 
 async def _agent_roster():
@@ -981,9 +1146,11 @@ async def _agent_roster():
 async def cerybro_chat(data: ChatInput):
     message = data.message.strip()[:6000]
     conversation_id = (data.conversation_id or "cerybro-ceo")[:100]
+    att_parts, att_notes, att_ids = await _attachment_context(data.attachment_ids)
 
-    if not message:
+    if not message and not att_ids:
         raise HTTPException(400, "Mesaj boş olamaz.")
+    stored_message = "\n".join(([message] if message else []) + att_notes)
 
     try:
         provider, model_name = await _ceo_choice()
@@ -995,7 +1162,10 @@ async def cerybro_chat(data: ChatInput):
         """, conversation_id)
 
         history = [{"role": r["role"], "content": r["content"]} for r in rows]
-        history.append({"role": "user", "content": message})
+        if att_parts:
+            history.append({"role": "user", "content": [{"type": "text", "text": stored_message}] + att_parts})
+        else:
+            history.append({"role": "user", "content": stored_message})
 
         system_prompt = {
             "role": "system",
@@ -1020,10 +1190,14 @@ async def cerybro_chat(data: ChatInput):
         # İki mesaj birlikte kaydedilir; model hata verirse geçmiş kirlenmez
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute("""
+                mid = await conn.fetchval("""
                     INSERT INTO cerybro_chat_messages (conversation_id, role, content)
-                    VALUES ($1, 'user', $2)
-                """, conversation_id, message)
+                    VALUES ($1, 'user', $2) RETURNING id
+                """, conversation_id, stored_message)
+                if att_ids:
+                    await conn.execute(
+                        "UPDATE cerybro_attachments SET message_id=$1, conversation_id=$2 WHERE id = ANY($3::uuid[])",
+                        mid, conversation_id, att_ids)
                 await conn.execute("""
                     INSERT INTO cerybro_chat_messages (conversation_id, role, content)
                     VALUES ($1, 'assistant', $2)

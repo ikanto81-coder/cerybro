@@ -25,6 +25,10 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 .user{width:55px;height:55px;border-radius:50%;border:2px solid #eee;display:grid;place-items:center;color:#888;font-size:20px}
 .add{width:58px;height:58px;border:1px solid #eee;border-radius:50%;background:white;font-size:32px}
 .ceo{display:flex;align-items:center;flex-direction:column;padding:18px 0 25px}
+.agent-svg{width:100%;height:100%;display:block;overflow:visible}
+.avatar-shape{background:none!important}
+.shapes .choice{display:flex;flex-direction:column;align-items:center;gap:4px;width:72px;padding:6px 4px;font-size:11px}
+.shapes .choice .agent-svg{width:34px;height:34px}
 .avatar{width:70px;height:70px;display:grid;place-items:center;color:white;font-size:29px;font-weight:bold;flex-shrink:0}
 .ceo .avatar{width:112px;height:112px;border-radius:37px;font-size:42px;transform:rotate(-7deg);position:relative}
 .star{position:absolute;right:-8px;bottom:-5px;background:#f5a000;border:5px solid white;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;font-size:16px}
@@ -67,6 +71,21 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 .chatfoot{display:flex;gap:9px;padding:12px;border-top:1px solid #eee}
 .chatfoot input{flex:1;min-width:0;border:1px solid #eee;border-radius:25px;padding:13px}
 .chatfoot button{background:#1685ed;color:white;border:0;border-radius:25px;padding:0 18px}
+.chatfoot .att-plus{background:#f1f1f1;color:#222;font-size:24px;width:46px;min-width:46px;padding:0;border-radius:50%}
+.chat{position:relative}
+.att-menu{display:none;position:absolute;left:12px;bottom:76px;background:#fff;border:1px solid #eee;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.15);padding:6px;z-index:50;min-width:230px}
+.att-menu.open{display:block}
+.att-menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:13px 12px;font-size:15px;border-radius:10px;color:#222}
+.att-menu button:active{background:#f3f3f3}
+.att-tray{display:flex;gap:8px;flex-wrap:wrap;padding:0 12px}
+.att-tray:empty{display:none}
+.att-chip{display:inline-flex;align-items:center;gap:6px;background:#f1f4f9;border-radius:12px;padding:6px 8px;font-size:12px;max-width:100%;color:#333}
+.att-chip img,.att-chip video{width:44px;height:44px;object-fit:cover;border-radius:8px}
+.att-chip .x{background:none;border:0;color:#888;font-size:16px;padding:0 2px}
+.att-chip.err{background:#fde8e8}
+.msg-atts{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.msg-atts img{max-width:160px;max-height:160px;border-radius:10px;display:block}
+.msg-atts video{max-width:200px;border-radius:10px}
 #toast{position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:#222;color:white;padding:12px 18px;border-radius:20px;display:none;z-index:40;font-size:13px}
 @media(max-width:500px){.item{gap:11px}.item .avatar{width:59px;height:59px}.name{font-size:17px}.preview{font-size:13px}.actions{flex-direction:column}.smallbtn{padding:6px}}
 </style>
@@ -230,15 +249,8 @@ async function cmTestOllama(){
 <div class="field"><label>Ajan adı</label><input id="name" placeholder="Örn. Nova"></div>
 <div class="field"><label>Görev / uzmanlık adı</label><input id="role" placeholder="Örn. Pazar Araştırma Uzmanı"></div>
 <div class="field"><label>Açıklama</label><textarea id="description" rows="2" placeholder="Bu ajan hangi işleri yapacak?"></textarea></div>
-<div class="field"><label>Avatar şekli</label><div class="shapes">
-<button class="choice selected" data-shape="rounded" onclick="pickShape('rounded')">Kare</button>
-<button class="choice" data-shape="circle" onclick="pickShape('circle')">Daire</button>
-<button class="choice" data-shape="hex" onclick="pickShape('hex')">Altıgen</button>
-<button class="choice" data-shape="diamond" onclick="pickShape('diamond')">Elmas</button>
-<button class="choice" data-shape="triangle" onclick="pickShape('triangle')">Üçgen</button>
-</div></div>
+<div class="field"><label>Şekil değiştir</label><div class="shapes" id="shapes"></div></div>
 <div class="field"><label>Avatar rengi</label><div class="colors" id="colors"></div></div>
-<div class="field"><label>Avatar sembolü</label><div class="symbols" id="symbols"></div></div>
 <div class="field"><label>Model sağlayıcısı</label><select id="provider"><option value="">Henüz atanmadı</option><option>Gemini</option><option>Claude</option><option>Grok</option><option>OpenAI</option><option>Yerel model</option></select></div>
 <div class="field"><label>Model adı (isteğe bağlı)</label><input id="model" placeholder="Model kimliği"></div>
 <div class="previewbox"><div class="avatar" id="previewAvatar">✦</div><div><strong id="previewName">Yeni Ajan</strong><div id="previewRole" style="font-size:13px;color:#777;margin-top:5px">Uzmanlık</div></div></div>
@@ -249,7 +261,18 @@ async function cmTestOllama(){
 <div class="chat" id="chat">
 <div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div><strong id="chatName"></strong><div style="font-size:12px;color:#888">Uzman ajan</div></div></div>
 <div class="chatbody"><div class="notice">Cerybro yapay zekâ bağlantısı aktif. Mesajlarını CEO sistemine gönderebilirsin.</div></div>
-<div class="chatfoot"><input id="message" placeholder="Mesaj yaz..."><button onclick="sendMessage()">Gönder</button></div>
+<div id="attTray" class="att-tray"></div>
+<div class="chatfoot"><button type="button" id="attBtn" class="att-plus" aria-label="Ek ekle" onclick="toggleAttMenu(event)">+</button><input id="message" placeholder="Mesaj yaz..."><button id="sendBtn" onclick="sendMessage()">Gönder</button></div>
+<div id="attMenu" class="att-menu" role="menu">
+<button type="button" onclick="pickFile('attImg')">🖼️ Fotoğraf/Görsel yükle</button>
+<button type="button" onclick="pickFile('attDoc')">📄 Belge yükle</button>
+<button type="button" onclick="pickFile('attCam')">📷 Fotoğraf çek</button>
+<button type="button" onclick="pickFile('attVid')">🎥 Video çek</button>
+</div>
+<input type="file" id="attImg" accept="image/*" multiple hidden onchange="filesChosen(this)">
+<input type="file" id="attDoc" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv" multiple hidden onchange="filesChosen(this)">
+<input type="file" id="attCam" accept="image/*" capture="environment" hidden onchange="filesChosen(this)">
+<input type="file" id="attVid" accept="video/*" capture="environment" hidden onchange="filesChosen(this)">
 </div>
 <div class="modal" id="profile">
 <div class="panel">
@@ -275,11 +298,16 @@ const palette=['#1685ed','#f32649','#f39808','#08b5a5','#9255ed','#222222','#e56
 const glyphs=['✦','●','◆','★','⚙','⌘','♟','◈','▲','⬢','☀','✿'];
 
 function toast(t){let x=document.getElementById('toast');x.textContent=t;x.style.display='block';setTimeout(()=>x.style.display='none',2600)}
+const SHAPES={"circle": {"svg": "<circle cx=\"50\" cy=\"50\" r=\"48\"/>", "ey": 46, "dx": 12, "cx": 50, "tr": "Daire"}, "rounded": {"svg": "<rect x=\"3\" y=\"3\" width=\"94\" height=\"94\" rx=\"24\"/>", "ey": 46, "dx": 12, "cx": 50, "tr": "Yuvarlak kare"}, "square": {"svg": "<rect x=\"4\" y=\"4\" width=\"92\" height=\"92\" rx=\"6\"/>", "ey": 46, "dx": 12, "cx": 50, "tr": "Kare"}, "squircle": {"svg": "<path d=\"M50 2C88 2 98 12 98 50S88 98 50 98 2 88 2 50 12 2 50 2Z\"/>", "ey": 46, "dx": 12, "cx": 50, "tr": "Yumuşak kare"}, "star": {"svg": "<polygon points=\"50.0,2.0 63.5,33.4 97.6,36.5 71.9,59.1 79.4,92.5 50.0,75.0 20.6,92.5 28.1,59.1 2.4,36.5 36.5,33.4\"/>", "ey": 54, "dx": 8, "cx": 50, "tr": "Yıldız"}, "sparkle": {"svg": "<polygon points=\"50.0,0.0 61.3,38.7 100.0,50.0 61.3,61.3 50.0,100.0 38.7,61.3 0.0,50.0 38.7,38.7\"/>", "ey": 50, "dx": 7, "cx": 50, "tr": "Parıltı"}, "cloud": {"svg": "<path d=\"M26 82C12 82 3 72 3 60C3 48 12 39 24 39C25 24 37 13 52 13C66 13 77 22 80 35C91 37 98 46 98 58C98 71 88 82 75 82Z\"/>", "ey": 55, "dx": 12, "cx": 50, "tr": "Bulut"}, "moon": {"svg": "<path d=\"M66 4A47 47 0 1 0 96 70A39 39 0 0 1 66 4Z\"/>", "ey": 54, "dx": 8, "cx": 33, "tr": "Aydede"}, "heart": {"svg": "<path d=\"M50 92C22 72 3 56 3 33C3 17 15 6 29 6C39 6 46 12 50 20C54 12 61 6 71 6C85 6 97 17 97 33C97 56 78 72 50 92Z\"/>", "ey": 40, "dx": 13, "cx": 50, "tr": "Kalp"}, "hex": {"svg": "<polygon points=\"50.0,2.0 91.6,26.0 91.6,74.0 50.0,98.0 8.4,74.0 8.4,26.0\"/>", "ey": 48, "dx": 12, "cx": 50, "tr": "Altıgen"}, "pentagon": {"svg": "<polygon points=\"50.0,4.0 97.6,38.5 79.4,94.5 20.6,94.5 2.4,38.5\"/>", "ey": 54, "dx": 11, "cx": 50, "tr": "Beşgen"}, "octagon": {"svg": "<polygon points=\"68.8,4.7 95.3,31.2 95.3,68.8 68.8,95.3 31.2,95.3 4.7,68.8 4.7,31.2 31.2,4.7\"/>", "ey": 47, "dx": 12, "cx": 50, "tr": "Sekizgen"}, "diamond": {"svg": "<polygon points=\"50,2 98,50 50,98 2,50\"/>", "ey": 48, "dx": 10, "cx": 50, "tr": "Elmas"}, "triangle": {"svg": "<path d=\"M50 6Q54 6 56 10L96 86Q98 94 90 94H10Q2 94 4 86L44 10Q46 6 50 6Z\"/>", "ey": 68, "dx": 9, "cx": 50, "tr": "Üçgen"}, "shield": {"svg": "<path d=\"M50 3L94 16V46C94 72 75 90 50 98C25 90 6 72 6 46V16Z\"/>", "ey": 44, "dx": 12, "cx": 50, "tr": "Kalkan"}, "flower": {"svg": "<circle cx=\"77.0\" cy=\"50.0\" r=\"22\"/><circle cx=\"63.5\" cy=\"73.4\" r=\"22\"/><circle cx=\"36.5\" cy=\"73.4\" r=\"22\"/><circle cx=\"23.0\" cy=\"50.0\" r=\"22\"/><circle cx=\"36.5\" cy=\"26.6\" r=\"22\"/><circle cx=\"63.5\" cy=\"26.6\" r=\"22\"/><circle cx=\"50\" cy=\"50\" r=\"30\"/>", "ey": 48, "dx": 10, "cx": 50, "tr": "Çiçek"}, "blob": {"svg": "<path d=\"M57 4C82 6 99 27 94 54C90 80 69 99 43 94C17 90 1 69 6 43C10 17 31 1 57 4Z\"/>", "ey": 46, "dx": 12, "cx": 50, "tr": "Damla leke"}, "drop": {"svg": "<path d=\"M50 2C50 2 88 42 88 64A38 38 0 0 1 12 64C12 42 50 2 50 2Z\"/>", "ey": 62, "dx": 11, "cx": 50, "tr": "Damla"}, "oval": {"svg": "<ellipse cx=\"50\" cy=\"50\" rx=\"34\" ry=\"48\"/>", "ey": 44, "dx": 10, "cx": 50, "tr": "Oval"}, "leaf": {"svg": "<path d=\"M10 90C6 44 34 8 92 8C94 60 62 94 10 90Z\"/>", "ey": 52, "dx": 10, "cx": 52, "tr": "Yaprak"}, "bubble": {"svg": "<path d=\"M50 6C77 6 97 22 97 44S77 82 50 82C44 82 39 81 34 80L12 96L18 74C8 66 3 56 3 44C3 22 23 6 50 6Z\"/>", "ey": 42, "dx": 12, "cx": 50, "tr": "Konuşma balonu"}, "ghost": {"svg": "<path d=\"M50 3C75 3 92 21 92 46V97L78 86L64 97L50 86L36 97L22 86L8 97V46C8 21 25 3 50 3Z\"/>", "ey": 42, "dx": 12, "cx": 50, "tr": "Hayalet"}};
+const SHAPE_ORDER=["circle", "rounded", "square", "star", "cloud", "moon", "heart", "hex", "diamond", "triangle", "shield", "flower", "blob", "drop", "pentagon", "octagon", "oval", "leaf", "bubble", "sparkle", "ghost", "squircle"];
+function agentSvg(shape,color){const s=SHAPES[shape]||SHAPES.rounded;const c=/^#[0-9a-fA-F]{6}$/.test(color||'')?color:'#1685ed';
+ return `<svg class="agent-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="${c}">${s.svg}</g><g fill="#fff"><ellipse cx="${s.cx-s.dx}" cy="${s.ey}" rx="5.5" ry="7"/><ellipse cx="${s.cx+s.dx}" cy="${s.ey}" rx="5.5" ry="7"/></g></svg>`}
+function setAvatar(el,shape,color){el.style.background='none';el.style.borderRadius='0';el.style.transform='none';el.innerHTML=agentSvg(shape,color)}
 function shapeStyle(s){return s==='circle'?'50%':s==='hex'?'22%':s==='diamond'?'8px':'18px'}
 function render(list=agents){
 document.getElementById('list').innerHTML=list.length?list.map(a=>`
 <div class="item">
-<div class="avatar" style="background:${a.color};border-radius:${shapeStyle(a.shape)};${a.shape==='diamond'?'transform:rotate(45deg)':''}" onclick="openChat(${a.id})">${a.symbol}</div>
+<div class="avatar avatar-shape" data-shape="${esc(a.shape)}" onclick="openChat(${a.id})">${agentSvg(a.shape,a.color)}</div>
 <div class="info" onclick="openChat(${a.id})"><div class="name">${esc(a.name)} · ${esc(a.role)}</div><div class="preview">${esc(a.description||'Uzman ajan')}</div></div>
 <div class="actions">
 <button class="smallbtn" onclick="editAgent(${a.id})">Düzenle</button>
@@ -317,14 +345,13 @@ async function loadAgents(){
 function filterAgents(){let q=document.getElementById('search').value.toLowerCase();render(agents.filter(a=>(a.name+' '+a.role+' '+a.description).toLowerCase().includes(q)))}
 function setupChoices(){
 document.getElementById('colors').innerHTML=palette.map(c=>`<button class="color" style="background:${c}" onclick="pickColor('${c}')" data-color="${c}"></button>`).join('');
-document.getElementById('symbols').innerHTML=glyphs.map(s=>`<button class="choice" onclick="pickSymbol('${s}')" data-symbol="${s}">${s}</button>`).join('');
+document.getElementById('shapes').innerHTML=SHAPE_ORDER.map(s=>`<button type="button" class="choice" data-shape="${s}" onclick="pickShape('${s}')">${agentSvg(s,'#555555')}<span>${SHAPES[s].tr}</span></button>`).join('');
 }
-function pickShape(s){shape=s;document.querySelectorAll('[data-shape]').forEach(b=>b.classList.toggle('selected',b.dataset.shape===s));preview()}
+function pickShape(s){shape=SHAPES[s]?s:'rounded';s=shape;document.querySelectorAll('#shapes [data-shape]').forEach(b=>b.classList.toggle('selected',b.dataset.shape===s));preview()}
 function pickColor(c){color=c;document.querySelectorAll('[data-color]').forEach(b=>b.classList.toggle('selected',b.dataset.color===c));preview()}
-function pickSymbol(s){symbol=s;document.querySelectorAll('[data-symbol]').forEach(b=>b.classList.toggle('selected',b.dataset.symbol===s));preview()}
+function pickSymbol(s){symbol=s}
 function preview(){
-let a=document.getElementById('previewAvatar');a.style.background=color;a.style.borderRadius=shapeStyle(shape);a.textContent=symbol;
-a.style.transform=shape==='diamond'?'rotate(45deg)':'none';
+let a=document.getElementById('previewAvatar');setAvatar(a,shape,color);
 document.getElementById('previewName').textContent=document.getElementById('name').value||'Yeni Ajan';
 document.getElementById('previewRole').textContent=document.getElementById('role').value||'Uzmanlık';
 }
@@ -367,7 +394,7 @@ function closeEditor(){document.getElementById('editor').style.display='none'}
 function openCEOChat(){
   document.getElementById('chatName').textContent='Cerybro · CEO';
   const av=document.getElementById('chatAvatar');
-  av.textContent='✦';
+  av.innerHTML='••';av.style.transform='none';av.style.color='#fff';
   av.style.background='#fa2345';
   av.style.borderRadius='50%';
   document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
@@ -375,15 +402,38 @@ function openCEOChat(){
 function openChat(id){
 let a=agents.find(x=>x.id===id);if(!a)return;
 document.getElementById('chatName').textContent=a.name+' · '+a.role;
-let av=document.getElementById('chatAvatar');av.textContent=a.symbol;av.style.background=a.color;av.style.borderRadius=shapeStyle(a.shape);
+let av=document.getElementById('chatAvatar');setAvatar(av,a.shape,a.color);
 document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
 }
 function closeChat(){document.getElementById('chat').style.display='none';document.documentElement.classList.remove('chat-open');document.body.classList.remove('chat-open')}
 
+
+let pendingAtts=[];
+function toggleAttMenu(e){e&&e.stopPropagation();document.getElementById('attMenu').classList.toggle('open')}
+document.addEventListener('click',e=>{const m=document.getElementById('attMenu');if(m&&!m.contains(e.target)&&e.target.id!=='attBtn')m.classList.remove('open')});
+function pickFile(id){document.getElementById('attMenu').classList.remove('open');const i=document.getElementById(id);i.value='';i.click()}
+function fmtSize(n){return n>1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB'}
+function attKind(f){return f.type.startsWith('image/')?'image':f.type.startsWith('video/')?'video':'document'}
+function renderTray(){const t=document.getElementById('attTray');t.innerHTML='';pendingAtts.forEach((a,i)=>{const c=document.createElement('div');c.className='att-chip'+(a.error?' err':'');
+ if(a.kind==='image'&&a.url){const im=document.createElement('img');im.src=a.url;c.appendChild(im)}
+ else if(a.kind==='video'&&a.url){const v=document.createElement('video');v.src=a.url;v.muted=true;c.appendChild(v)}
+ const s=document.createElement('span');s.textContent=(a.kind==='document'?'📄 ':'')+a.name+' · '+(a.error?a.error:a.id?fmtSize(a.size):'yükleniyor…');c.appendChild(s);
+ const x=document.createElement('button');x.className='x';x.textContent='×';x.onclick=()=>{pendingAtts.splice(i,1);renderTray()};c.appendChild(x);t.appendChild(c)})}
+async function filesChosen(inp){const token=sessionStorage.getItem('cerybro_admin_token');
+ for(const f of [...inp.files]){const kind=attKind(f);const lim=kind==='video'?100:25;
+  const a={name:f.name||('dosya-'+Date.now()),size:f.size,kind,url:(kind!=='document')?URL.createObjectURL(f):null};pendingAtts.push(a);
+  if(f.size>lim*1048576){a.error='en fazla '+lim+' MB';renderTray();continue}
+  renderTray();
+  try{const r=await fetch('/api/uploads?filename='+encodeURIComponent(a.name)+'&conversation_id=cerybro-ceo',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':f.type||'application/octet-stream'},body:f});
+   const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||('HTTP '+r.status));a.id=d.id;a.kind=d.kind}
+  catch(e){a.error=e.message}
+  renderTray()}}
 async function sendMessage(){
     const input=document.getElementById('message');
     const message=input.value.trim();
-    if(!message)return;
+    if(pendingAtts.some(a=>!a.id&&!a.error)){toast('Dosya yükleniyor, lütfen bekle');return}
+    const atts=pendingAtts.filter(a=>a.id);
+    if(!message&&!atts.length)return;
 
     const body=document.querySelector('.chatbody');
     const conversationId='cerybro-ceo';
@@ -394,18 +444,24 @@ async function sendMessage(){
         return;
     }
 
-    const addMessage=(role,text)=>{
+    const addMessage=(role,text,list)=>{
         const el=document.createElement('div');
+        if(list&&list.length){const w=document.createElement('div');w.className='msg-atts';list.forEach(a=>{let n;
+            if(a.kind==='image'&&a.url){n=document.createElement('img');n.src=a.url;n.alt=a.name}
+            else if(a.kind==='video'&&a.url){n=document.createElement('video');n.src=a.url;n.controls=true}
+            else{n=document.createElement('span');n.className='att-chip';n.textContent='📄 '+a.name+' · '+fmtSize(a.size)}
+            w.appendChild(n)});el.appendChild(w)}
         el.style.cssText='padding:12px;margin:8px 0;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;'+
             (role==='user'?'background:#e9f0ff;margin-left:12%;':'background:#f1f1f1;margin-right:8%;');
-        el.textContent=text;
+        if(text){const t=document.createElement('div');t.textContent=text;el.appendChild(t)}
         body.appendChild(el);
         body.scrollTop=body.scrollHeight;
     };
 
     input.value='';
-    addMessage('user',message);
-    const button=document.querySelector('.chatfoot button');
+    addMessage('user',message,atts);
+    pendingAtts=[];renderTray();
+    const button=document.getElementById('sendBtn');
     if(button)button.disabled=true;
 
     try{
@@ -415,6 +471,7 @@ async function sendMessage(){
             body:JSON.stringify({
                 message,
                 conversation_id:conversationId,
+                attachment_ids:atts.map(a=>a.id),
                 agent_name:document.getElementById('chatName').textContent || 'Cerybro'
             })
         });
@@ -558,7 +615,7 @@ async function saveProfile(){
 }
 function setIk(n){const p=String(n||'').trim().split(/\s+/).filter(Boolean);if(p.length)document.getElementById('ikBtn').textContent=(p[0][0]+(p.length>1?p[p.length-1][0]:'')).toLocaleUpperCase('tr')}
 function cerybroLogout(){sessionStorage.removeItem('cerybro_admin_token');location.reload()}
-window.addEventListener('load',()=>{loadAgents();offerPasskey();});
+window.addEventListener('load',()=>{setupChoices();loadAgents();offerPasskey();});
 </script>
 
 

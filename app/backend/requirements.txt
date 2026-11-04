@@ -5,3 +5,6 @@ redis>=5.0,<7.0
 litellm
 cryptography
 webauthn>=2.2,<3
+pypdf>=4
+python-docx>=1.1
+openpyxl>=3.1

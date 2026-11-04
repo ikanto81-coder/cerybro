@@ -49,6 +49,8 @@ services:
     build:
       context: ./app/backend
     container_name: cerybro-api
+    volumes:
+      - /opt/ai-ceo/data/uploads:/data/uploads
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://cerybro:${POSTGRES_PASSWORD}@postgres:5432/cerybro
