@@ -62,6 +62,7 @@ services:
         condition: service_healthy
     networks:
       - cerybro-internal
+      - cerybro-public
     mem_limit: 700m
     cpus: 0.7
     healthcheck:
@@ -78,3 +79,5 @@ services:
 networks:
   cerybro-internal:
     external: true
+  cerybro-public:
+    driver: bridge
