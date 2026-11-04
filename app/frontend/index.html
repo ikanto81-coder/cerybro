@@ -92,6 +92,19 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 .msg-atts video{max-width:200px;border-radius:10px}
 #toast{position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:#222;color:white;padding:12px 18px;border-radius:20px;display:none;z-index:40;font-size:13px}
 @media(max-width:500px){.item{gap:11px}.item .avatar{width:59px;height:59px}.name{font-size:17px}.preview{font-size:13px}.actions{flex-direction:column}.smallbtn{padding:6px}}
+
+.chatfoot{flex-wrap:wrap}.chatfoot .voicebar{flex-basis:100%}
+.voicebar{display:flex;align-items:center;gap:6px;padding:0;flex-wrap:wrap;font-size:13px}
+.voicebar select{padding:6px 8px;border-radius:10px;border:1px solid #ddd;background:#fff;font-size:13px;max-width:150px}
+.chatfoot .voicebar .vb{height:auto;border-radius:10px;padding:6px 10px;border-radius:10px;border:1px solid #ddd;background:#fff;font-size:13px;color:#333}
+.chatfoot .voicebar .vb[aria-pressed="true"]{background:#e9f0ff;border-color:#1677ff;color:#1677ff}
+#voiceWarn{font-size:12px;color:#b35c00;flex-basis:100%}
+.chatfoot .mic{width:44px;min-width:44px;height:44px;border-radius:50%;border:1px solid #ddd;background:#fff;font-size:18px;padding:0}
+.chatfoot .mic.rec{background:#fa2345;border-color:#fa2345;animation:micp 1s infinite}
+@keyframes micp{50%{opacity:.6}}
+.msg .replay{margin-top:6px;border:none;background:none;font-size:15px;padding:2px 4px;cursor:pointer;opacity:.7}
+.vl-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eee;font-size:14px}
+.vl-row code{color:#666;font-size:12px}.vl-row .sp{flex:1}
 </style>
 
 <style id="cerybro-mobile-chat-fix">
@@ -113,7 +126,7 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
     overflow-x: hidden !important;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
-    padding-bottom: 110px !important;
+    padding-bottom: 150px !important;
   }
   .chatfoot {
     position: fixed !important;
@@ -266,7 +279,7 @@ async function cmTestOllama(){
 <div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div style="flex:1;min-width:0"><strong id="chatName" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></strong><div style="font-size:12px;color:#888" id="chatSub">Uzman ajan</div></div><button class="secondary" type="button" id="histBtn" title="Geçmiş sohbetler" onclick="openHistory()">🕘</button><button class="primary" type="button" id="newChatBtn" onclick="newChat()">Yeni sohbet</button></div>
 <div class="chatbody"><div class="notice">Cerybro yapay zekâ bağlantısı aktif. Mesajlarını CEO sistemine gönderebilirsin.</div></div>
 <div id="attTray" class="att-tray"></div>
-<div class="chatfoot"><button type="button" id="attBtn" class="att-plus" aria-label="Ek ekle" onclick="toggleAttMenu(event)">+</button><input id="message" placeholder="Mesaj yaz..."><button id="sendBtn" onclick="sendMessage()">Gönder</button></div>
+<div class="chatfoot"><div class="voicebar" id="voiceBar"><select id="voiceLang" aria-label="Ses dili" onchange="voiceSetLang(this.value)"></select><button type="button" id="spkBtn" class="vb" onclick="voiceToggleSpeaker()" aria-pressed="false" title="Cevapları sesli oku">🔇 Sesli cevap</button><button type="button" class="vb" onclick="openVoiceSettings()" title="Dilleri düzenle">⚙</button><span id="voiceWarn"></span></div><button type="button" id="attBtn" class="att-plus" aria-label="Ek ekle" onclick="toggleAttMenu(event)">+</button><input id="message" placeholder="Mesaj yaz..."><button type="button" id="micBtn" class="mic" aria-label="Sesle yaz" title="Sesle yaz" onclick="voiceMic()">🎤</button><button id="sendBtn" onclick="sendMessage()">Gönder</button></div>
 <div id="attMenu" class="att-menu" role="menu">
 <button type="button" onclick="pickFile('attImg')">🖼️ Fotoğraf/Görsel yükle</button>
 <button type="button" onclick="pickFile('attDoc')">📄 Belge yükle</button>
@@ -306,6 +319,7 @@ async function cmTestOllama(){
 </div>
 </div>
 <div class="modal" id="histModal" style="z-index:40"><div class="panel"><h2>Geçmiş sohbetler</h2><div id="histList" style="max-height:60vh;overflow:auto"></div><div class="row"><button class="secondary" type="button" onclick="document.getElementById('histModal').style.display='none'">Kapat</button></div></div></div>
+<div class="modal" id="voiceModal" style="z-index:40"><div class="panel" style="width:100%;max-width:420px;box-sizing:border-box;max-height:90vh;overflow:auto"><h2>Ses dilleri</h2><p style="font-size:13px;color:#666">Konuşma tanıma ve sesli cevap için diller. Yeni dil: BCP‑47 kodu (ör. fr-FR, ru-RU) ve görünen ad.</p><div id="voiceLangList"></div><div style="display:flex;gap:6px;margin-top:10px"><input id="vlCode" placeholder="fr-FR" style="width:80px;min-width:0;box-sizing:border-box"><input id="vlLabel" placeholder="Français" style="flex:1;min-width:0;box-sizing:border-box"><button class="primary" type="button" onclick="voiceAddLang()">Ekle</button></div><div style="font-size:12px;color:#777;margin-top:8px" id="voiceInfo"></div><div class="row"><button class="secondary" type="button" onclick="voiceResetLangs()">Varsayılana dön</button><button class="secondary" type="button" onclick="document.getElementById('voiceModal').style.display='none'">Kapat</button></div></div></div>
 <div id="toast"></div>
 
 <script>
@@ -417,7 +431,7 @@ function renderMsg(role,text,list){const body=document.querySelector('.chatbody'
   else{n=document.createElement('span');n.className='att-chip';n.textContent='📄 '+a.name+' · '+fmtSize(a.size)}
   w.appendChild(n)});el.appendChild(w)}
  el.className='msg msg-'+role;el.style.cssText='padding:12px;margin:8px 0;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;'+(role==='user'?'background:#e9f0ff;margin-left:12%;':'background:#f1f1f1;margin-right:8%;');
- if(text){const t=document.createElement('div');t.textContent=text;el.appendChild(t)}
+ if(text){const t=document.createElement('div');t.textContent=text;el.appendChild(t);if(role==='assistant'&&window.voiceAddReplay)voiceAddReplay(el,text)}
  body.appendChild(el);body.scrollTop=body.scrollHeight;return el}
 function showSummaryNote(s){if(!s)return;const b=document.querySelector('.chatbody');const n=document.createElement('div');n.className='notice summary-note';n.style.cssText='background:#fff7e6;border:1px solid #f3d19e;padding:10px;border-radius:10px;white-space:pre-wrap;font-size:13px';n.textContent='Önceki sohbetin özeti bağlama eklendi:\n'+s;b.appendChild(n)}
 async function loadSession(sid){currentConv=sid;resetChatBody('Sohbet yükleniyor…');
@@ -528,6 +542,7 @@ async function sendMessage(){
         const data=await response.json();
         if(!response.ok)throw new Error(data.detail||'Mesaj gönderilemedi');
         addMessage('assistant',data.response);
+        if(window.voiceAuto)voiceAuto(data.response);
     }catch(e){
         addMessage('assistant','Bağlantı hatası: '+e.message);
     }finally{
@@ -898,6 +913,78 @@ window.addEventListener("load",()=>{const m=document.getElementById("model");if(
  const c=document.getElementById("cerybro-ceo-provider");if(c){c.addEventListener("change",()=>cbFillModels(c.value,"ceoModelList"));}
  const cm=document.getElementById("cerybro-ceo-model");if(cm)cm.addEventListener("focus",()=>cbFillModels(document.getElementById("cerybro-ceo-provider").value,"ceoModelList"));
  const am=document.getElementById("model");if(am)am.addEventListener("focus",()=>cbFillModels(document.getElementById("provider").value,"agentModelList"));});
+</script>
+<script>
+/* ---- Sesli dinleme / sesli cevap (yalnızca tarayıcı Web Speech API, ücretsiz) ---- */
+const VOICE_DEFAULT=[{code:'tr-TR',label:'Türkçe'},{code:'en-US',label:'English'},{code:'es-ES',label:'Español'},{code:'ar-SA',label:'العربية'},{code:'de-DE',label:'Deutsch'}];
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const hasTTS='speechSynthesis' in window&&'SpeechSynthesisUtterance' in window;
+let voiceRec=null,voiceListening=false;
+function voiceLangs(){try{const l=JSON.parse(localStorage.getItem('cerybro_voice_langs'));if(Array.isArray(l)&&l.length)return l}catch(e){}return VOICE_DEFAULT.slice()}
+function voiceSaveLangs(l){localStorage.setItem('cerybro_voice_langs',JSON.stringify(l));voiceFill()}
+function voiceLang(){const l=localStorage.getItem('cerybro_voice_lang')||'tr-TR';return voiceLangs().some(x=>x.code===l)?l:(voiceLangs()[0]||{}).code||'tr-TR'}
+function voiceSetLang(v){localStorage.setItem('cerybro_voice_lang',v)}
+function voiceSpeakerOn(){return hasTTS&&localStorage.getItem('cerybro_voice_speaker')==='1'}
+function voiceFill(){const s=document.getElementById('voiceLang');if(!s)return;const cur=voiceLang();s.innerHTML='';
+ voiceLangs().forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=x.label+' ('+x.code+')';s.appendChild(o)});s.value=cur;
+ const b=document.getElementById('spkBtn');if(b){const on=voiceSpeakerOn();b.setAttribute('aria-pressed',on);b.textContent=(on?'🔊':'🔇')+' Sesli cevap';b.disabled=!hasTTS}
+ const w=document.getElementById('voiceWarn');if(w){const m=[];if(!SR)m.push('Bu tarayıcı sesle yazmayı desteklemiyor (ör. Firefox). Android’de Chrome, iPhone’da Safari kullanabilirsin.');if(!hasTTS)m.push('Bu tarayıcı sesli okumayı desteklemiyor.');w.textContent=m.join(' ')}
+ const mb=document.getElementById('micBtn');if(mb&&!SR)mb.style.opacity='.4'}
+function voiceToggleSpeaker(){if(!hasTTS){toast('Bu tarayıcı sesli okumayı desteklemiyor');return}const on=!voiceSpeakerOn();localStorage.setItem('cerybro_voice_speaker',on?'1':'0');if(!on)speechSynthesis.cancel();voiceFill();toast(on?'Cevaplar sesli okunacak':'Sesli cevap kapalı')}
+/* Cevap dilini metinden tahmin et; emin değilse seçili dil */
+function voiceDetect(t){const sel=voiceLang();const codes=voiceLangs().map(x=>x.code);const pick=p=>codes.find(c=>c.toLowerCase().startsWith(p))||null;
+ const s=(t||'').slice(0,600);
+ if(/[\u0600-\u06FF]/.test(s))return pick('ar')||sel;
+ if(/[\u0400-\u04FF]/.test(s))return pick('ru')||pick('uk')||sel;
+ if(/[ğıİşĞŞ]/.test(s))return pick('tr')||sel;
+ if(/[ñ¿¡]/.test(s))return pick('es')||sel;
+ if(/ß/.test(s))return pick('de')||sel;
+ const w=(' '+s.toLowerCase().replace(/[^a-zà-ÿçöü ]/g,' ')+' ');const n=r=>(w.match(r)||[]).length;
+ const sc={tr:n(/ (ve|bir|bu|için|ile|ne|çok|değil|gibi|daha) /g),en:n(/ (the|and|is|you|to|of|for|with|that|this) /g),es:n(/ (el|la|los|las|que|de|y|es|por|para|con|una) /g),de:n(/ (der|die|das|und|ist|nicht|ich|sie|mit|ein|eine) /g)};
+ const best=Object.entries(sc).sort((a,b)=>b[1]-a[1])[0];
+ if(best[1]>=2){const c=pick(best[0]);if(c)return c}
+ return sel}
+function voicePick(code){const vs=speechSynthesis.getVoices();const lc=code.toLowerCase(),base=lc.split('-')[0];
+ return vs.find(v=>v.lang.toLowerCase().replace('_','-')===lc)||vs.find(v=>v.lang.toLowerCase().startsWith(base))||null}
+function voiceClean(t){return (t||'').replace(/```[\s\S]*?```/g,' ').replace(/[*_#>`|]/g,' ').replace(/\[(.*?)\]\(.*?\)/g,'$1').replace(/https?:\/\/\S+/g,' ').replace(/\s+/g,' ').trim()}
+function voiceSpeak(text,btn){if(!hasTTS){toast('Bu tarayıcı sesli okumayı desteklemiyor');return}
+ speechSynthesis.cancel();const code=voiceDetect(text);const clean=voiceClean(text);if(!clean)return;
+ const parts=clean.match(/[^.!?؟।\n]{1,220}[.!?؟]?/g)||[clean];const v=voicePick(code);
+ if(!v&&speechSynthesis.getVoices().length)toast('Cihazda '+code+' sesi yok; varsayılan ses kullanılıyor');
+ parts.forEach((p,i)=>{const u=new SpeechSynthesisUtterance(p.trim());u.lang=code;if(v)u.voice=v;u.rate=1;
+  if(btn){if(i===0)u.onstart=()=>btn.textContent='⏹';if(i===parts.length-1){u.onend=u.onerror=()=>btn.textContent='🔊'}}
+  speechSynthesis.speak(u)});
+ window.__voiceLast={code,voice:v?v.name+' ('+v.lang+')':null,parts:parts.length}}
+function voiceAddReplay(el,text){if(!hasTTS)return;const b=document.createElement('button');b.type='button';b.className='replay';b.textContent='🔊';b.title='Sesli oku';
+ b.onclick=e=>{e.stopPropagation();if(b.textContent==='⏹'){speechSynthesis.cancel();b.textContent='🔊';return}voiceSpeak(text,b)};el.appendChild(b)}
+function voiceAuto(text){if(!voiceSpeakerOn())return;const ms=document.querySelectorAll('.chatbody .msg-assistant .replay');voiceSpeak(text,ms[ms.length-1])}
+function voiceMic(){
+ if(!SR){toast('Bu tarayıcı sesle yazmayı desteklemiyor. Android’de Chrome veya iPhone’da Safari kullanın.');return}
+ if(voiceListening&&voiceRec){voiceRec.stop();return}
+ if(hasTTS)speechSynthesis.cancel();
+ const inp=document.getElementById('message'),btn=document.getElementById('micBtn');const before=inp.value?inp.value.trim()+' ':'';
+ let finalT='',errored=false;
+ voiceRec=new SR();voiceRec.lang=voiceLang();voiceRec.interimResults=true;voiceRec.continuous=false;voiceRec.maxAlternatives=1;
+ voiceRec.onstart=()=>{voiceListening=true;btn.classList.add('rec');inp.placeholder='Dinliyorum…'};
+ voiceRec.onresult=e=>{let interim='';for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];if(r.isFinal)finalT+=r[0].transcript;else interim+=r[0].transcript}inp.value=before+finalT+interim};
+ voiceRec.onerror=e=>{errored=true;const m={'not-allowed':'Mikrofon izni verilmedi. Tarayıcı ayarlarından izin verin.','service-not-allowed':'Mikrofon izni verilmedi.','no-speech':'Ses algılanmadı, tekrar deneyin.','network':'Ses tanıma için internet bağlantısı gerekli.','language-not-supported':'Bu dil bu tarayıcıda desteklenmiyor: '+voiceRec.lang,'audio-capture':'Mikrofon bulunamadı.'};if(e.error!=='aborted')toast(m[e.error]||('Ses tanıma hatası: '+e.error))};
+ voiceRec.onend=()=>{voiceListening=false;btn.classList.remove('rec');inp.placeholder='Mesaj yaz...';if(!errored&&finalT.trim()){inp.value=(before+finalT).trim();sendMessage()}};
+ try{voiceRec.start()}catch(e){toast('Mikrofon başlatılamadı: '+e.message)}}
+function openVoiceSettings(){const m=document.getElementById('voiceModal'),l=document.getElementById('voiceLangList');l.innerHTML='';
+ const vs=hasTTS?speechSynthesis.getVoices():[];
+ voiceLangs().forEach((x,i)=>{const r=document.createElement('div');r.className='vl-row';const n=document.createElement('span');n.className='sp';n.textContent=x.label+' ';const c=document.createElement('code');c.textContent=x.code;n.appendChild(c);
+  const has=document.createElement('span');has.style.fontSize='12px';has.textContent=!hasTTS?'':(voicePick(x.code)?'ses ✓':'ses yok');has.style.color=voicePick(x.code)?'#2a8a3e':'#b35c00';
+  const d=document.createElement('button');d.type='button';d.className='secondary';d.textContent='Sil';d.onclick=()=>{const L=voiceLangs();if(L.length<=1){toast('En az bir dil kalmalı');return}L.splice(i,1);voiceSaveLangs(L);openVoiceSettings()};
+  r.append(n,has,d);l.appendChild(r)});
+ document.getElementById('voiceInfo').textContent='Konuşma tanıma: '+(SR?'destekleniyor':'desteklenmiyor')+' · Sesli okuma: '+(hasTTS?'destekleniyor ('+vs.length+' ses)':'desteklenmiyor')+'. Bu ayarlar bu cihazda saklanır.';
+ m.style.display='flex'}
+function voiceAddLang(){const c=document.getElementById('vlCode').value.trim(),lb=document.getElementById('vlLabel').value.trim();
+ if(!/^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/.test(c)){toast('Geçersiz dil kodu (ör. fr-FR)');return}
+ const L=voiceLangs();if(L.some(x=>x.code.toLowerCase()===c.toLowerCase())){toast('Bu dil zaten var');return}
+ L.push({code:c,label:(lb||c).slice(0,40)});voiceSaveLangs(L);document.getElementById('vlCode').value='';document.getElementById('vlLabel').value='';openVoiceSettings();toast(c+' eklendi')}
+function voiceResetLangs(){localStorage.removeItem('cerybro_voice_langs');voiceFill();openVoiceSettings()}
+if(hasTTS){speechSynthesis.getVoices();speechSynthesis.onvoiceschanged=()=>{}}
+voiceFill();
 </script>
 </body>
 </html>
