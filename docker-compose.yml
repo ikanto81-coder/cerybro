@@ -51,6 +51,8 @@ services:
     container_name: cerybro-api
     volumes:
       - /opt/ai-ceo/data/uploads:/data/uploads
+      - /opt/ai-ceo/backups/deleted-agents:/data/deleted-agents
+      - /opt/ai-ceo/backups/agents:/data/agent-backups
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://cerybro:${POSTGRES_PASSWORD}@postgres:5432/cerybro
@@ -83,3 +85,4 @@ networks:
     external: true
   cerybro-public:
     driver: bridge
+ 

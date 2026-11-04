@@ -73,6 +73,10 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 .chatfoot button{background:#1685ed;color:white;border:0;border-radius:25px;padding:0 18px}
 .chatfoot .att-plus{background:#f1f1f1;color:#222;font-size:24px;width:46px;min-width:46px;padding:0;border-radius:50%}
 .chat{position:relative}
+.smallbtn.danger{color:#d62828}
+.delrow{display:flex;align-items:center;gap:10px;padding:9px 2px;font-size:15px}
+.delrow input{width:20px;height:20px}
+.delrow .cnt{margin-left:auto;color:#888;font-size:12px}
 .att-menu{display:none;position:absolute;left:12px;bottom:76px;background:#fff;border:1px solid #eee;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.15);padding:6px;z-index:50;min-width:230px}
 .att-menu.open{display:block}
 .att-menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:13px 12px;font-size:15px;border-radius:10px;color:#222}
@@ -289,6 +293,18 @@ async function cmTestOllama(){
 <div class="row"><button class="secondary" type="button" onclick="cerybroLogout()">Çıkış yap</button><button class="secondary" type="button" onclick="closeProfile()">Kapat</button><button class="primary" type="button" onclick="saveProfile()">Kaydet</button></div>
 </div>
 </div>
+<div class="modal" id="delModal">
+<div class="panel">
+<h2 id="delTitle">Ajanı sil</h2>
+<p style="font-size:13px;color:#666;margin-top:0">Yalnızca bu ajana ait ve silinmesi diğer ajanlara/sisteme zarar vermeyen veriler listelenir. Silmeden önce otomatik yedek alınır (7 gün saklanır).</p>
+<div id="delCats"></div>
+<label class="delrow" style="border-top:1px solid #eee;margin-top:6px;padding-top:12px"><input type="checkbox" id="delAll" onchange="delAllToggle()"> <b>Ajanı tamamen sil</b></label>
+<div id="delKept" style="font-size:12px;color:#777;margin:8px 0"></div>
+<div class="field"><label>Onay için ajan adını yaz: <b id="delNameHint"></b></label><input id="delConfirm" autocomplete="off" oninput="delCheck()"></div>
+<div id="delStatus" style="font-size:13px;min-height:18px"></div>
+<div class="row"><button class="secondary" type="button" onclick="closeDelete()">Vazgeç</button><button class="primary" type="button" id="delGo" disabled style="background:#e5383b" onclick="doDelete()">Sil</button></div>
+</div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -310,7 +326,7 @@ document.getElementById('list').innerHTML=list.length?list.map(a=>`
 <div class="avatar avatar-shape" data-shape="${esc(a.shape)}" onclick="openChat(${a.id})">${agentSvg(a.shape,a.color)}</div>
 <div class="info" onclick="openChat(${a.id})"><div class="name">${esc(a.name)} · ${esc(a.role)}</div><div class="preview">${esc(a.description||'Uzman ajan')}</div></div>
 <div class="actions">
-<button class="smallbtn" onclick="editAgent(${a.id})">Düzenle</button>
+<button class="smallbtn" onclick="editAgent(${a.id})">Düzenle</button><button class="smallbtn danger" onclick="openDelete(${a.id})">Sil</button>
 <button class="smallbtn" onclick="pauseAgent(${a.id})">Pasife al</button>
 </div>
 </div>`).join(''):'<p style="text-align:center;color:#888;padding:30px">Henüz ajan bulunmuyor.</p>';
@@ -391,7 +407,9 @@ if(!confirm('Bu ajanı pasife almak istiyor musun?'))return;
 try{let r=await fetch(API+'/'+id,{method:'DELETE'});if(!r.ok)throw Error();await loadAgents();toast('Ajan pasife alındı')}catch(e){toast('İşlem başarısız')}
 }
 function closeEditor(){document.getElementById('editor').style.display='none'}
-function openCEOChat(){
+let currentConv='cerybro-ceo';
+function resetChatBody(){const b=document.querySelector('.chatbody');b.innerHTML='<div class="notice">Cerybro yapay zekâ bağlantısı aktif.</div>';pendingAtts=[];renderTray()}
+function openCEOChat(){if(currentConv!=='cerybro-ceo')resetChatBody();currentConv='cerybro-ceo';
   document.getElementById('chatName').textContent='Cerybro · CEO';
   const av=document.getElementById('chatAvatar');
   av.innerHTML='••';av.style.transform='none';av.style.color='#fff';
@@ -401,6 +419,7 @@ function openCEOChat(){
 }
 function openChat(id){
 let a=agents.find(x=>x.id===id);if(!a)return;
+if(currentConv!=='agent-'+id)resetChatBody();currentConv='agent-'+id;
 document.getElementById('chatName').textContent=a.name+' · '+a.role;
 let av=document.getElementById('chatAvatar');setAvatar(av,a.shape,a.color);
 document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
@@ -424,7 +443,7 @@ async function filesChosen(inp){const token=sessionStorage.getItem('cerybro_admi
   const a={name:f.name||('dosya-'+Date.now()),size:f.size,kind,url:(kind!=='document')?URL.createObjectURL(f):null};pendingAtts.push(a);
   if(f.size>lim*1048576){a.error='en fazla '+lim+' MB';renderTray();continue}
   renderTray();
-  try{const r=await fetch('/api/uploads?filename='+encodeURIComponent(a.name)+'&conversation_id=cerybro-ceo',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':f.type||'application/octet-stream'},body:f});
+  try{const r=await fetch('/api/uploads?filename='+encodeURIComponent(a.name)+'&conversation_id='+encodeURIComponent(currentConv),{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':f.type||'application/octet-stream'},body:f});
    const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||('HTTP '+r.status));a.id=d.id;a.kind=d.kind}
   catch(e){a.error=e.message}
   renderTray()}}
@@ -436,7 +455,7 @@ async function sendMessage(){
     if(!message&&!atts.length)return;
 
     const body=document.querySelector('.chatbody');
-    const conversationId='cerybro-ceo';
+    const conversationId=currentConv;
     const token=sessionStorage.getItem('cerybro_admin_token');
 
     if(!token){
@@ -486,6 +505,27 @@ async function sendMessage(){
     }
 }
 
+
+
+let delId=null,delName='';
+async function openDelete(id){const a=agents.find(x=>x.id===id);if(!a)return;delId=id;delName=a.name;
+ document.getElementById('delTitle').textContent='Ajanı sil: '+a.name;document.getElementById('delNameHint').textContent=a.name;
+ document.getElementById('delConfirm').value='';document.getElementById('delAll').checked=false;document.getElementById('delStatus').textContent='';
+ document.getElementById('delCats').textContent='Yükleniyor…';document.getElementById('delModal').style.display='flex';
+ try{const d=await cmReq('/api/agents/'+id+'/data');
+  document.getElementById('delCats').innerHTML=Object.entries(d.categories).map(([k,v])=>`<label class="delrow"><input type="checkbox" class="delcat" value="${k}" onchange="delCheck()"> ${esc(v.label)}<span class="cnt">${k==='settings'?'':v.count+' kayıt'}</span></label>`).join('');
+  document.getElementById('delKept').textContent='Silinmeyecekler: CEO, diğer ajanlar, ortak sistem yedekleri ve ayarları.'+(d.kept.tasks_unassigned?' Bu ajana atanmış '+d.kept.tasks_unassigned+' görev silinmez, atamasız kalır.':'');
+ }catch(e){document.getElementById('delCats').textContent='Hata: '+e.message}
+ delCheck()}
+function closeDelete(){document.getElementById('delModal').style.display='none'}
+function delAllToggle(){const on=document.getElementById('delAll').checked;document.querySelectorAll('.delcat').forEach(c=>{c.checked=on;c.disabled=on});delCheck()}
+function delCheck(){const any=document.getElementById('delAll').checked||[...document.querySelectorAll('.delcat')].some(c=>c.checked);
+ document.getElementById('delGo').disabled=!(any&&document.getElementById('delConfirm').value.trim()===delName)}
+async function doDelete(){const all=document.getElementById('delAll').checked;const cats=[...document.querySelectorAll('.delcat:checked')].map(c=>c.value);
+ const st=document.getElementById('delStatus');st.textContent='Siliniyor…';document.getElementById('delGo').disabled=true;
+ try{const d=await cmReq('/api/agents/'+delId+'/purge',{method:'POST',body:JSON.stringify({categories:cats,delete_agent:all,confirm_name:document.getElementById('delConfirm').value.trim()})});
+  closeDelete();await loadAgents();toast(all?'Ajan silindi (yedek 7 gün saklanır)':'Seçilen veriler silindi');
+ }catch(e){st.textContent='Hata: '+e.message;delCheck()}}
 
 async function cmReq(url,opts={}){
  const t=sessionStorage.getItem('cerybro_admin_token');

@@ -225,6 +225,10 @@ async def lifespan(app: FastAPI):
     )
     async with db_pool.acquire() as conn:
         await _create_schema(conn)
+    try:
+        _purge_old_deleted_dumps()
+    except Exception:
+        pass
 
     yield
 
@@ -552,6 +556,176 @@ async def pause_agent(agent_id: int):
     if not row:
         raise HTTPException(404, "Ajan bulunamadı")
     return {"message": "Ajan pasife alındı", "agent": agent_dict(row)}
+
+
+# ------------------------------------------------------------------ AJAN SİLME
+AGENT_BACKUP_DIR = os.getenv("CERYBRO_AGENT_BACKUP_DIR", "/data/agent-backups")
+DELETED_AGENTS_DIR = os.getenv("CERYBRO_DELETED_AGENTS_DIR", "/data/deleted-agents")
+PURGE_CATEGORIES = ("memory", "settings", "chat", "uploads", "backups")
+PROTECTED_AGENT_NAMES = {"cerybro", "ceo", "cerybro ceo", "cerybro · ceo"}
+
+
+async def _ensure_audit():
+    await db_pool.execute("""CREATE TABLE IF NOT EXISTS cerybro_audit_log (
+        id BIGSERIAL PRIMARY KEY, action VARCHAR(60) NOT NULL, target VARCHAR(120),
+        details JSONB NOT NULL DEFAULT '{}'::jsonb, actor VARCHAR(160),
+        created_at TIMESTAMPTZ DEFAULT NOW())""")
+
+
+def _purge_old_deleted_dumps(days=7):
+    import time as _t
+    if not os.path.isdir(DELETED_AGENTS_DIR):
+        return 0
+    n = 0
+    for f in os.listdir(DELETED_AGENTS_DIR):
+        p = os.path.join(DELETED_AGENTS_DIR, f)
+        if os.path.isfile(p) and _t.time() - os.path.getmtime(p) > days * 86400:
+            os.remove(p)
+            n += 1
+    return n
+
+
+async def _agent_footprint(agent_id):
+    await _ensure_attachments()
+    conv = "agent-" + str(agent_id)
+    row = await db_pool.fetchrow("SELECT * FROM agents WHERE id=$1", agent_id)
+    if not row:
+        raise HTTPException(404, "Ajan bulunamadı")
+    if row["name"].strip().lower() in PROTECTED_AGENT_NAMES:
+        raise HTTPException(403, "CEO ajanı silinemez")
+    keys = []
+    async for k in redis_client.scan_iter(match="agent:%d:*" % agent_id, count=200):
+        keys.append(k)
+    async for k in redis_client.scan_iter(match="cerybro:agent:%d:*" % agent_id, count=200):
+        keys.append(k)
+    bdir = os.path.join(AGENT_BACKUP_DIR, str(agent_id))
+    bfiles = []
+    if os.path.isdir(bdir):
+        for root, _, files in os.walk(bdir):
+            bfiles += [os.path.join(root, f) for f in files]
+    return {
+        "agent": row, "conv": conv, "redis_keys": keys, "backup_dir": bdir, "backup_files": bfiles,
+        "messages": await db_pool.fetchval("SELECT count(*) FROM cerybro_chat_messages WHERE conversation_id=$1", conv),
+        "attachments": await db_pool.fetch("SELECT id, ext, filename, size_bytes FROM cerybro_attachments WHERE conversation_id=$1", conv),
+        "tasks": await db_pool.fetchval("SELECT count(*) FROM cerybro_tasks WHERE assigned_agent_id=$1", agent_id),
+    }
+
+
+@app.get("/api/agents/{agent_id}/data")
+async def agent_data_summary(agent_id: int):
+    f = await _agent_footprint(agent_id)
+    return {
+        "agent": {"id": agent_id, "name": f["agent"]["name"]},
+        "categories": {
+            "memory": {"label": "Hafıza / önbellek", "count": len(f["redis_keys"])},
+            "settings": {"label": "Ajana özgü kurallar ve ayarlar", "count": 1},
+            "chat": {"label": "Sohbet geçmişi", "count": f["messages"]},
+            "uploads": {"label": "Yüklenen dosyalar", "count": len(f["attachments"])},
+            "backups": {"label": "Sunucudaki ajana özel yedekler", "count": len(f["backup_files"])},
+        },
+        "kept": {"tasks_unassigned": f["tasks"]},
+    }
+
+
+class AgentPurgeInput(BaseModel):
+    categories: List[str] = Field(default_factory=list)
+    delete_agent: bool = False
+    confirm_name: str
+
+
+@app.post("/api/agents/{agent_id}/purge")
+async def purge_agent(agent_id: int, data: AgentPurgeInput, request: Request):
+    import gzip, shutil, datetime as _dt
+    cats = set(data.categories)
+    if not cats <= set(PURGE_CATEGORIES):
+        raise HTTPException(400, "Geçersiz kategori")
+    if data.delete_agent:
+        cats = set(PURGE_CATEGORIES)
+    if not cats:
+        raise HTTPException(400, "Silinecek bir şey seçilmedi")
+    f = await _agent_footprint(agent_id)
+    a = f["agent"]
+    if data.confirm_name.strip() != a["name"]:
+        raise HTTPException(400, "Onay için ajan adını aynen yazmalısın")
+    await _ensure_audit()
+    os.makedirs(DELETED_AGENTS_DIR, exist_ok=True)
+    _purge_old_deleted_dumps()
+
+    # 1) Yedek: bu ajana ait her şey tek dosyaya
+    def rec(r):
+        return {k: (v.isoformat() if hasattr(v, "isoformat") else str(v) if not isinstance(v, (int, float, bool, type(None), list, dict)) else v) for k, v in dict(r).items()}
+    msgs = await db_pool.fetch("SELECT * FROM cerybro_chat_messages WHERE conversation_id=$1 ORDER BY id", f["conv"])
+    atts = await db_pool.fetch("SELECT * FROM cerybro_attachments WHERE conversation_id=$1", f["conv"])
+    mem = {}
+    for k in f["redis_keys"]:
+        try:
+            mem[k] = str(await redis_client.dump(k))
+        except Exception:
+            pass
+    stamp = _dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    base = os.path.join(DELETED_AGENTS_DIR, "agent-%d-%s" % (agent_id, stamp))
+    with gzip.open(base + ".json.gz", "wt", encoding="utf-8") as g:
+        json.dump({"agent": rec(a), "categories": sorted(cats), "delete_agent": data.delete_agent,
+                   "messages": [rec(r) for r in msgs], "attachments": [rec(r) for r in atts],
+                   "redis_dump_repr": mem, "backup_files": f["backup_files"]}, g, ensure_ascii=False)
+    files_to_archive = []
+    if "uploads" in cats:
+        files_to_archive += [os.path.join(UPLOAD_DIR, "%s.%s" % (r["id"], r["ext"])) for r in atts]
+    if "backups" in cats:
+        files_to_archive += f["backup_files"]
+    files_to_archive = [p for p in files_to_archive if os.path.isfile(p)]
+    if files_to_archive:
+        import tarfile
+        with tarfile.open(base + "-files.tar.gz", "w:gz") as t:
+            for p in files_to_archive:
+                t.add(p, arcname=os.path.relpath(p, "/data"))
+
+    # 2) Veritabanı: tek işlem
+    result = {}
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            if "uploads" in cats:
+                result["attachments"] = int((await conn.execute(
+                    "DELETE FROM cerybro_attachments WHERE conversation_id=$1", f["conv"])).split()[-1])
+            if "chat" in cats:
+                if "uploads" not in cats:
+                    await conn.execute("""UPDATE cerybro_attachments SET message_id=NULL
+                        WHERE message_id IN (SELECT id FROM cerybro_chat_messages WHERE conversation_id=$1)""", f["conv"])
+                result["messages"] = int((await conn.execute(
+                    "DELETE FROM cerybro_chat_messages WHERE conversation_id=$1", f["conv"])).split()[-1])
+            if data.delete_agent:
+                result["tasks_unassigned"] = int((await conn.execute(
+                    "UPDATE cerybro_tasks SET assigned_agent_id=NULL WHERE assigned_agent_id=$1", agent_id)).split()[-1])
+                result["agent_row"] = int((await conn.execute("DELETE FROM agents WHERE id=$1", agent_id)).split()[-1])
+            elif "settings" in cats:
+                await conn.execute("""UPDATE agents SET description='', model_provider=NULL, model_name=NULL,
+                    permissions='[]'::jsonb, memory_enabled=TRUE, updated_at=NOW() WHERE id=$1""", agent_id)
+                result["settings_reset"] = True
+            await conn.execute("INSERT INTO cerybro_audit_log (action, target, details, actor) VALUES ($1,$2,$3::jsonb,$4)",
+                "agent_purge", "agent:%d:%s" % (agent_id, a["name"]),
+                {"categories": sorted(cats), "delete_agent": data.delete_agent, "result": result,
+                 "backup": os.path.basename(base)}, ADMIN_EMAIL if "ADMIN_EMAIL" in globals() else "admin")
+
+    # 3) Dosyalar ve önbellek (DB işlemi başarılı olduktan sonra)
+    errors = []
+    if "memory" in cats and f["redis_keys"]:
+        try:
+            result["memory_keys"] = await redis_client.delete(*f["redis_keys"])
+        except Exception as exc:
+            errors.append("memory: " + type(exc).__name__)
+    if "uploads" in cats:
+        n = 0
+        for r in atts:
+            p = os.path.join(UPLOAD_DIR, "%s.%s" % (r["id"], r["ext"]))
+            if os.path.isfile(p):
+                os.remove(p)
+                n += 1
+        result["upload_files"] = n
+    if "backups" in cats and os.path.isdir(f["backup_dir"]):
+        shutil.rmtree(f["backup_dir"], ignore_errors=True)
+        result["backup_files"] = len(f["backup_files"])
+    return {"ok": True, "deleted": result, "errors": errors,
+            "backup": os.path.basename(base) + ".json.gz", "backup_kept_days": 7}
 
 
 # ------------------------------------------------------------------ MODELLER
