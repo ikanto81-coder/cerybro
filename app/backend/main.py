@@ -34,7 +34,11 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------- AYARLAR
 DATABASE_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
-ADMIN_HASH = os.environ["CERYBRO_ADMIN_PASSWORD_HASH"]
+GOOGLE_CLIENT_ID = os.environ.get(
+    "CERYBRO_GOOGLE_CLIENT_ID",
+    "184405280042-djfna9m6gt4ban51o0lhrsjoil7e6m15.apps.googleusercontent.com",
+).strip()
+ADMIN_EMAIL = "ikanto81@gmail.com"
 AUTH_SECRET = os.environ["CERYBRO_SECRET_KEY"]
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://cerybro-ollama:11434")
 TOKEN_TTL = 43200
@@ -241,26 +245,8 @@ app = FastAPI(
 
 
 # ------------------------------------------------------------ GİRİŞ / YETKİ
-class LoginInput(BaseModel):
-    password: str = Field(min_length=1, max_length=256)
-
-
 def _b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _verify_password(password):
-    try:
-        alg, iterations, salt, digest = ADMIN_HASH.split("$")
-        if alg != "pbkdf2_sha256":
-            return False
-        actual = hashlib.pbkdf2_hmac(
-            "sha256", password.encode(), bytes.fromhex(salt),
-            int(iterations), dklen=len(bytes.fromhex(digest))
-        )
-        return hmac.compare_digest(actual, bytes.fromhex(digest))
-    except Exception:
-        return False
 
 
 def _new_token():
@@ -325,18 +311,47 @@ async def _login_record_failure(keys):
         pass
 
 
-@app.post("/api/login")
-async def admin_login(data: LoginInput, request: Request):
+class GoogleLoginInput(BaseModel):
+    credential: str = Field(min_length=20, max_length=8192)
+
+
+def _verify_google_id_token(credential):
+    import urllib.parse
+    import urllib.request
+    url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + urllib.parse.quote(credential, safe="")
+    try:
+        with urllib.request.urlopen(url, timeout=8) as r:
+            info = json.loads(r.read())
+    except Exception:
+        return None
+    if info.get("aud") != GOOGLE_CLIENT_ID:
+        return None
+    if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        return None
+    try:
+        if int(info.get("exp", 0)) < int(time.time()):
+            return None
+    except Exception:
+        return None
+    return info
+
+
+@app.get("/api/auth/config")
+async def auth_config():
+    return {"google_client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/api/auth/google")
+async def google_login(data: GoogleLoginInput, request: Request):
     keys = ["cerybro:login_fail:ip:" + _client_ip(request), "cerybro:login_fail:all"]
     if await _login_keys_blocked(keys):
         raise HTTPException(429, "Çok fazla hatalı deneme. 15 dakika sonra tekrar dene.")
-
-    # PBKDF2 yavaştır; ana akışı bloklamasın diye ayrı iş parçacığında çalışır
-    ok = await asyncio.to_thread(_verify_password, data.password)
-    if not ok:
+    info = await asyncio.to_thread(_verify_google_id_token, data.credential)
+    email = str((info or {}).get("email", "")).strip().lower()
+    verified = str((info or {}).get("email_verified", "")).lower() == "true"
+    if not info or email != ADMIN_EMAIL or not verified:
         await _login_record_failure(keys)
-        raise HTTPException(status_code=401, detail="Şifre hatalı")
-
+        raise HTTPException(status_code=403, detail="Bu hesapla giriş yetkisi yok")
     try:
         await redis_client.delete(keys[0])
     except Exception:
@@ -344,10 +359,15 @@ async def admin_login(data: LoginInput, request: Request):
     return {"access_token": _new_token(), "token_type": "bearer", "expires_in": TOKEN_TTL}
 
 
+@app.post("/api/login")
+async def admin_login_removed():
+    raise HTTPException(status_code=410, detail="Şifreli giriş kaldırıldı. Google ile giriş yapın.")
+
+
 @app.middleware("http")
 async def cerybro_auth_guard(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and path != "/api/login":
+    if path.startswith("/api/") and path not in ("/api/login", "/api/auth/google", "/api/auth/config"):
         header = request.headers.get("authorization", "")
         token = header[7:].strip() if header.lower().startswith("bearer ") else ""
         if not _valid_token(token):
@@ -742,6 +762,44 @@ async def save_ceo_settings(data: CeoSettingsInput):
     """, provider, model_name)
 
     return {"status": "saved", "provider": provider, "model_name": model_name}
+
+
+# ------------------------------------------------------------------ PROFİL (İK)
+class ProfileInput(BaseModel):
+    full_name: str = Field(default="", max_length=120)
+    title: str = Field(default="", max_length=120)
+    email: str = Field(default="", max_length=160)
+    phone: str = Field(default="", max_length=40)
+    language: str = Field(default="tr", max_length=8)
+    notes: str = Field(default="", max_length=2000)
+
+
+async def _ensure_profile_table():
+    await db_pool.execute(
+        "CREATE TABLE IF NOT EXISTS cerybro_profile (id INT PRIMARY KEY, data JSONB NOT NULL DEFAULT '{}'::jsonb, updated_at TIMESTAMPTZ DEFAULT NOW())"
+    )
+
+
+@app.get("/api/profile")
+async def get_profile():
+    await _ensure_profile_table()
+    row = await db_pool.fetchrow("SELECT data FROM cerybro_profile WHERE id=1")
+    data = row["data"] if row else {}
+    if isinstance(data, str):
+        data = json.loads(data or "{}")
+    return {**ProfileInput().model_dump(), **(data or {})}
+
+
+@app.put("/api/profile")
+async def save_profile(data: ProfileInput):
+    await _ensure_profile_table()
+    payload = {k: (v.strip() if isinstance(v, str) else v) for k, v in data.model_dump().items()}
+    await db_pool.execute(
+        "INSERT INTO cerybro_profile (id, data, updated_at) VALUES (1, $1::jsonb, NOW()) "
+        "ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=NOW()",
+        json.dumps(payload),
+    )
+    return {"status": "saved", **payload}
 
 
 # --------------------------------------------------------------- CEO SOHBETİ

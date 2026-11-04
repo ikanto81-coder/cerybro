@@ -59,7 +59,7 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 .secondary{background:#f0f1f3;color:#333;border:0;border-radius:11px;padding:13px 18px}
 .row{display:flex;gap:9px;margin-top:18px}
 .row button{flex:1}
-.chat{background:white;display:none;flex-direction:column;justify-content:initial;padding:0}
+.chat{background:white;display:none;flex-direction:column;justify-content:initial;padding:0;z-index:30}
 .chathead{height:75px;border-bottom:1px solid #eee;display:flex;align-items:center;padding:12px 18px;gap:13px}
 .chathead .avatar{width:45px;height:45px;font-size:18px}
 .chatbody{flex:1;background:#fafafa;padding:20px}
@@ -73,11 +73,11 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 
 <style id="cerybro-mobile-chat-fix">
 @media (max-width: 600px) {
-  html:has(.chatbody), body:has(.chatbody) {
+  html.chat-open, body.chat-open {
     height: 100%;
     overflow: hidden;
   }
-  body:has(.chatbody) {
+  body.chat-open {
     height: 100dvh;
     min-height: 0;
   }
@@ -108,22 +108,21 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 </head>
 <body>
 <div id="cerybro-login-overlay" style="position:fixed;inset:0;z-index:99999;background:#f8f8f7;display:flex;align-items:center;justify-content:center;padding:22px;font-family:Arial,sans-serif">
-<form id="cerybro-login-form" style="width:100%;max-width:390px;background:white;padding:28px;border:1px solid #ddd;border-radius:20px">
+<div id="cerybro-login-form" style="width:100%;max-width:390px;background:white;padding:28px;border:1px solid #ddd;border-radius:20px;text-align:center">
 <h2>Cerybro</h2><p>Yönetici girişi</p>
-<input id="cerybro-admin-password" type="password" autocomplete="current-password" placeholder="Yönetici şifresi" required style="box-sizing:border-box;width:100%;padding:15px;border:1px solid #ccc;border-radius:10px;font-size:16px">
-<button style="width:100%;margin-top:14px;padding:15px;background:#222;color:white;border:0;border-radius:10px">Giriş yap</button>
+<div id="cerybro-google-btn" style="display:flex;justify-content:center;min-height:44px"></div>
 <div id="cerybro-login-error" style="color:#b42318;margin-top:12px"></div>
-</form></div>
+</div></div>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 (()=>{
 const overlay=document.getElementById('cerybro-login-overlay');
-const form=document.getElementById('cerybro-login-form');
 const error=document.getElementById('cerybro-login-error');
 const key='cerybro_admin_token';
 const originalFetch=window.fetch.bind(window);
 window.fetch=async(resource,options={})=>{
  const url=typeof resource==='string'?resource:(resource.url||'');
- const protectedApi=url.startsWith('/api/') && url!='/api/login';
+ const protectedApi=url.startsWith('/api/') && !url.startsWith('/api/auth/') && url!='/api/login';
  if(protectedApi){
   const token=sessionStorage.getItem(key);
   if(!token){overlay.style.display='flex';throw new Error('Yönetici girişi gerekli');}
@@ -137,20 +136,25 @@ window.fetch=async(resource,options={})=>{
  }
  return response;
 };
-form.addEventListener('submit',async e=>{
- e.preventDefault();error.textContent='';
- const button=form.querySelector('button');button.disabled=true;
+async function onGoogle(resp){
+ error.textContent='';
  try{
-  const response=await originalFetch('/api/login',{
-   method:'POST',headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({password:document.getElementById('cerybro-admin-password').value})
-  });
-  const data=await response.json();
-  if(!response.ok)throw new Error(data.detail||'Giriş başarısız');
-  sessionStorage.setItem(key,data.access_token);location.reload();
+  const r=await originalFetch('/api/auth/google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(r.status===403?'Bu Google hesabının yetkisi yok.':(d.detail||'Giriş başarısız'));
+  sessionStorage.setItem(key,d.access_token);location.reload();
  }catch(err){error.textContent=err.message;}
- finally{button.disabled=false;}
-});
+}
+async function initGoogle(){
+ try{
+  const c=await (await originalFetch('/api/auth/config')).json();
+  const go=()=>{if(!(window.google&&google.accounts&&google.accounts.id))return setTimeout(go,150);
+   google.accounts.id.initialize({client_id:c.google_client_id,callback:onGoogle,auto_select:false,ux_mode:'popup'});
+   google.accounts.id.renderButton(document.getElementById('cerybro-google-btn'),{theme:'outline',size:'large',text:'signin_with',locale:'tr'});};
+  go();
+ }catch(e){error.textContent='Google girişi yüklenemedi.';}
+}
+if(!sessionStorage.getItem(key))initGoogle();
 if(sessionStorage.getItem(key))overlay.style.display='none';
 })();
 
@@ -174,7 +178,7 @@ async function cmTestOllama(){
 </script>
 
 <div class="app">
-<header><div class="user">IK</div><button class="add" onclick="newAgent()">+</button></header>
+<header><button class="user" id="ikBtn" type="button" onclick="openProfile()" aria-label="Profil" style="background:white;cursor:pointer">IK</button><button class="add" onclick="newAgent()">+</button></header>
 <div class="ceo" role="button" tabindex="0" style="cursor:pointer" onclick="openCEOChat()">
 <div class="avatar" style="background:#fa2345">••<div class="star">★</div></div>
 <strong>Cerybro · CEO</strong>
@@ -215,6 +219,19 @@ async function cmTestOllama(){
 <div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div><strong id="chatName"></strong><div style="font-size:12px;color:#888">Uzman ajan</div></div></div>
 <div class="chatbody"><div class="notice">Cerybro yapay zekâ bağlantısı aktif. Mesajlarını CEO sistemine gönderebilirsin.</div></div>
 <div class="chatfoot"><input id="message" placeholder="Mesaj yaz..."><button onclick="sendMessage()">Gönder</button></div>
+</div>
+<div class="modal" id="profile">
+<div class="panel">
+<h2>Profil bilgileri</h2>
+<div class="field"><label>Ad soyad</label><input id="pf_full_name" maxlength="120"></div>
+<div class="field"><label>Unvan</label><input id="pf_title" maxlength="120"></div>
+<div class="field"><label>E-posta</label><input id="pf_email" type="email" maxlength="160"></div>
+<div class="field"><label>Telefon</label><input id="pf_phone" type="tel" maxlength="40"></div>
+<div class="field"><label>Dil</label><select id="pf_language"><option value="tr">Türkçe</option><option value="en">English</option></select></div>
+<div class="field"><label>Notlar</label><textarea id="pf_notes" rows="3" maxlength="2000"></textarea></div>
+<div id="pf_status" style="font-size:13px;color:#555;min-height:18px"></div>
+<div class="row"><button class="secondary" type="button" onclick="cerybroLogout()">Çıkış yap</button><button class="secondary" type="button" onclick="closeProfile()">Kapat</button><button class="primary" type="button" onclick="saveProfile()">Kaydet</button></div>
+</div>
 </div>
 <div id="toast"></div>
 
@@ -320,15 +337,15 @@ function openCEOChat(){
   av.textContent='✦';
   av.style.background='#fa2345';
   av.style.borderRadius='50%';
-  document.getElementById('chat').style.display='flex';
+  document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
 }
 function openChat(id){
 let a=agents.find(x=>x.id===id);if(!a)return;
 document.getElementById('chatName').textContent=a.name+' · '+a.role;
 let av=document.getElementById('chatAvatar');av.textContent=a.symbol;av.style.background=a.color;av.style.borderRadius=shapeStyle(a.shape);
-document.getElementById('chat').style.display='flex';
+document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
 }
-function closeChat(){document.getElementById('chat').style.display='none'}
+function closeChat(){document.getElementById('chat').style.display='none';document.documentElement.classList.remove('chat-open');document.body.classList.remove('chat-open')}
 
 async function sendMessage(){
     const input=document.getElementById('message');
@@ -459,6 +476,22 @@ async function cmSave(){
  }
 }
 
+
+const PF=['full_name','title','email','phone','language','notes'];
+async function openProfile(){
+ document.getElementById('profile').style.display='flex';
+ const s=document.getElementById('pf_status');s.textContent='Yükleniyor...';
+ try{const d=await cmReq('/api/profile');PF.forEach(k=>document.getElementById('pf_'+k).value=d[k]??(k==='language'?'tr':''));s.textContent='';
+  if(d.full_name)setIk(d.full_name)}catch(e){s.textContent='Profil alınamadı: '+e.message}
+}
+function closeProfile(){document.getElementById('profile').style.display='none'}
+async function saveProfile(){
+ const s=document.getElementById('pf_status');const body={};PF.forEach(k=>body[k]=document.getElementById('pf_'+k).value);
+ s.textContent='Kaydediliyor...';
+ try{await cmReq('/api/profile',{method:'PUT',body:JSON.stringify(body)});s.textContent='Kaydedildi.';setIk(body.full_name);toast('Profil kaydedildi')}catch(e){s.textContent='Kayıt başarısız: '+e.message}
+}
+function setIk(n){const p=String(n||'').trim().split(/\s+/).filter(Boolean);if(p.length)document.getElementById('ikBtn').textContent=(p[0][0]+(p.length>1?p[p.length-1][0]:'')).toLocaleUpperCase('tr')}
+function cerybroLogout(){sessionStorage.removeItem('cerybro_admin_token');location.reload()}
 window.addEventListener('load',()=>{loadAgents();});
 </script>
 
