@@ -1,0 +1,1 @@
+[{"relation":["delegate_permission/common.handle_all_urls","delegate_permission/common.get_login_creds"],"target":{"namespace":"android_app","package_name":"com.cairakuzey.cerybro","sha256_cert_fingerprints":["0F:D1:E9:75:9E:BC:8F:87:93:13:4B:26:52:B3:33:C4:F4:A0:21:9A:0A:86:47:9E:9E:2D:E0:99:8B:75:07:9B"]}}]

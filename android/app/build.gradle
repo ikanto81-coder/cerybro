@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+def ksProps = new Properties()
+def ksFile = file(System.getenv('CERYBRO_KEYSTORE_PROPS') ?: '../keystore.properties')
+if (ksFile.exists()) ksFile.withInputStream { ksProps.load(it) }
+android {
+    namespace 'com.cairakuzey.cerybro'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.cairakuzey.cerybro'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        manifestPlaceholders = [hostName: 'cerybro.cairakuzey.cloud', launchUrl: 'https://cerybro.cairakuzey.cloud/?app=android']
+    }
+    signingConfigs {
+        release {
+            if (ksProps['storeFile']) {
+                storeFile file(ksProps['storeFile']); storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']; keyPassword ksProps['keyPassword']
+            }
+        }
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.release } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies { implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0' }

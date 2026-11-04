@@ -19,3 +19,12 @@ ollama/
 *-backup-*
 *.port-backup-*
 projects/
+
+# Android
+*.jks
+*.keystore
+keystore.properties
+*.apk
+*.aab
+local.properties
+download/

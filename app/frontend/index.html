@@ -510,6 +510,7 @@ async function sendMessage(){
     if(pendingAtts.some(a=>!a.id&&!a.error)){toast('Dosya yükleniyor, lütfen bekle');return}
     const atts=pendingAtts.filter(a=>a.id);
     if(!message&&!atts.length)return;
+    if(!atts.length&&window.cbAppCmd&&cbAppCmd(message)){input.value='';return}
 
     const body=document.querySelector('.chatbody');
     const conversationId=currentConv;
@@ -985,6 +986,22 @@ function voiceAddLang(){const c=document.getElementById('vlCode').value.trim(),l
 function voiceResetLangs(){localStorage.removeItem('cerybro_voice_langs');voiceFill();openVoiceSettings()}
 if(hasTTS){speechSynthesis.getVoices();speechSynthesis.onvoiceschanged=()=>{}}
 voiceFill();
+</script>
+<script>
+/* ---- Android uygulaması: "X'i aç" / "open X" -> telefondaki uygulamayı yerelde aç (LLM çağrılmaz) ---- */
+(function(){try{const q=new URLSearchParams(location.search);if(q.get('app')==='android'||document.referrer.startsWith('android-app://com.cairakuzey.cerybro')){localStorage.setItem('cerybro_native','android');if(q.get('app')){q.delete('app');history.replaceState(null,'',location.pathname+(q.toString()?'?'+q:'')+location.hash)}}}catch(e){}})();
+function cbIsNative(){return localStorage.getItem('cerybro_native')==='android'&&/Android/i.test(navigator.userAgent)}
+function cbParseOpen(m){const s=m.trim().replace(/[.!?。]+$/,'');let r;
+ if(r=s.match(/^(?:open|launch|start)\s+(?:the\s+)?(.+?)(?:\s+app)?$/i))return r[1];
+ if(r=s.match(/^(.+?)\s+(?:uygulamasını\s+|uygulamasini\s+)?(?:aç|ac|başlat|baslat|çalıştır|calistir)(?:ar mısın|ar misin|abilir misin|\s+lütfen|\s+lutfen)?$/i)){let n=r[1].trim();n=n.replace(/^(?:lütfen|lutfen)\s+/i,'');
+  if(/['’]/.test(n))n=n.split(/['’]/)[0];else n=n.replace(/\s+uygulaması$/i,'');return n.trim()||null}
+ return null}
+function cbLaunch(name){location.href='intent://launch?name='+encodeURIComponent(name)+'#Intent;scheme=cerybro;package=com.cairakuzey.cerybro;end'}
+function cbAppCmd(msg){if(!cbIsNative())return false;const n=cbParseOpen(msg);if(!n||n.length>40)return false;
+ renderMsg('user',msg);renderMsg('assistant','📱 '+n+' açılıyor…');
+ const ms=document.querySelectorAll('.chatbody .msg-assistant');const el=ms[ms.length-1];
+ if(el){const b=document.createElement('button');b.type='button';b.className='secondary';b.style.marginTop='6px';b.textContent='Açılmadıysa dokun: '+n;b.onclick=()=>cbLaunch(n);el.appendChild(b)}
+ cbLaunch(n);return true}
 </script>
 </body>
 </html>
