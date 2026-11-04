@@ -1,0 +1,17 @@
+.env
+*.env
+config/
+data/
+backups/
+*.sql
+*.dump
+*.tar.gz
+*.tgz
+*.zip
+*.key
+*.pem
+*.bak*
+*.backup*
+__pycache__/
+*.pyc
+ollama/

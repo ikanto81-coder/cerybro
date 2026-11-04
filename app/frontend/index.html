@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
+<title>Cerybro | AI Organization</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:#171717;font-family:Arial,system-ui,sans-serif}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+.app{max-width:760px;margin:auto;min-height:100vh;padding-bottom:100px}
+header{height:90px;display:flex;align-items:center;justify-content:space-between;padding:15px 25px}
+.user{width:55px;height:55px;border-radius:50%;border:2px solid #eee;display:grid;place-items:center;color:#888;font-size:20px}
+.add{width:58px;height:58px;border:1px solid #eee;border-radius:50%;background:white;font-size:32px}
+.ceo{display:flex;align-items:center;flex-direction:column;padding:18px 0 25px}
+.avatar{width:70px;height:70px;display:grid;place-items:center;color:white;font-size:29px;font-weight:bold;flex-shrink:0}
+.ceo .avatar{width:112px;height:112px;border-radius:37px;font-size:42px;transform:rotate(-7deg);position:relative}
+.star{position:absolute;right:-8px;bottom:-5px;background:#f5a000;border:5px solid white;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;font-size:16px}
+.ceo strong{font-size:20px;font-weight:500;margin-top:15px}
+.ceo small{color:#999;margin-top:5px}
+.list{padding:0 17px}
+.item{display:flex;align-items:center;gap:15px;padding:13px 8px;min-height:96px;border-radius:14px}
+.item:active{background:#f7f8fa}
+.info{flex:1;min-width:0;cursor:pointer}
+.name{font-size:19px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preview{font-size:14px;color:#888;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.actions{display:flex;gap:5px}
+.smallbtn{border:0;background:#f4f5f7;border-radius:9px;padding:8px;color:#555;font-size:12px}
+.bottom{position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px max(14px,calc((100% - 720px)/2));display:flex;gap:10px;align-items:center;border-top:1px solid #eee}
+.search{height:55px;border:1px solid #eee;border-radius:35px;display:flex;align-items:center;gap:10px;padding:0 18px;flex:1}
+.search input{border:0;outline:0;width:100%;font-size:17px}
+.qr{width:54px;height:54px;border:1px solid #eee;border-radius:50%;background:white;font-size:23px}
+.modal,.chat{display:none;position:fixed;inset:0;background:#0006;z-index:20;align-items:center;justify-content:center;padding:15px}
+.panel{background:white;width:100%;max-width:490px;max-height:90vh;overflow:auto;border-radius:22px;padding:22px}
+.panel h2{margin:0 0 17px;font-size:21px}
+.field{margin:13px 0}
+.field label{display:block;font-size:13px;color:#555;margin-bottom:7px}
+.field input,.field select,.field textarea{width:100%;border:1px solid #ddd;border-radius:10px;padding:12px;background:white}
+.colors,.symbols,.shapes{display:flex;gap:9px;flex-wrap:wrap}
+.color{width:32px;height:32px;border-radius:50%;border:3px solid white;outline:1px solid #ddd}
+.color.selected{outline:3px solid #222}
+.choice{border:1px solid #ddd;background:white;border-radius:9px;padding:9px 12px}
+.choice.selected{border:2px solid #1685ed;background:#eef5ff}
+.previewbox{display:flex;align-items:center;gap:14px;background:#f6f7f9;padding:13px;border-radius:13px;margin:15px 0}
+.previewbox .avatar{width:54px;height:54px;font-size:22px}
+.primary{background:#1685ed;color:white;border:0;border-radius:11px;padding:13px 18px;font-weight:600}
+.secondary{background:#f0f1f3;color:#333;border:0;border-radius:11px;padding:13px 18px}
+.row{display:flex;gap:9px;margin-top:18px}
+.row button{flex:1}
+.chat{background:white;display:none;flex-direction:column;justify-content:initial;padding:0}
+.chathead{height:75px;border-bottom:1px solid #eee;display:flex;align-items:center;padding:12px 18px;gap:13px}
+.chathead .avatar{width:45px;height:45px;font-size:18px}
+.chatbody{flex:1;background:#fafafa;padding:20px}
+.notice{background:white;border:1px solid #eee;padding:15px;border-radius:14px;color:#777;font-size:14px;text-align:center}
+.chatfoot{display:flex;gap:9px;padding:12px;border-top:1px solid #eee}
+.chatfoot input{flex:1;min-width:0;border:1px solid #eee;border-radius:25px;padding:13px}
+.chatfoot button{background:#1685ed;color:white;border:0;border-radius:25px;padding:0 18px}
+#toast{position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:#222;color:white;padding:12px 18px;border-radius:20px;display:none;z-index:40;font-size:13px}
+@media(max-width:500px){.item{gap:11px}.item .avatar{width:59px;height:59px}.name{font-size:17px}.preview{font-size:13px}.actions{flex-direction:column}.smallbtn{padding:6px}}
+</style>
+
+<style id="cerybro-mobile-chat-fix">
+@media (max-width: 600px) {
+  html:has(.chatbody), body:has(.chatbody) {
+    height: 100%;
+    overflow: hidden;
+  }
+  body:has(.chatbody) {
+    height: 100dvh;
+    min-height: 0;
+  }
+  .chatbody {
+    height: calc(100dvh - 340px) !important;
+    max-height: calc(100dvh - 340px) !important;
+    min-height: 100px !important;
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    padding-bottom: 110px !important;
+  }
+  .chatfoot {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    z-index: 1000 !important;
+    box-sizing: border-box !important;
+    background: #fff !important;
+    padding: 12px 18px calc(12px + env(safe-area-inset-bottom)) !important;
+  }
+}
+</style>
+
+</head>
+<body>
+<div id="cerybro-login-overlay" style="position:fixed;inset:0;z-index:99999;background:#f8f8f7;display:flex;align-items:center;justify-content:center;padding:22px;font-family:Arial,sans-serif">
+<form id="cerybro-login-form" style="width:100%;max-width:390px;background:white;padding:28px;border:1px solid #ddd;border-radius:20px">
+<h2>Cerybro</h2><p>Yönetici girişi</p>
+<input id="cerybro-admin-password" type="password" autocomplete="current-password" placeholder="Yönetici şifresi" required style="box-sizing:border-box;width:100%;padding:15px;border:1px solid #ccc;border-radius:10px;font-size:16px">
+<button style="width:100%;margin-top:14px;padding:15px;background:#222;color:white;border:0;border-radius:10px">Giriş yap</button>
+<div id="cerybro-login-error" style="color:#b42318;margin-top:12px"></div>
+</form></div>
+<script>
+(()=>{
+const overlay=document.getElementById('cerybro-login-overlay');
+const form=document.getElementById('cerybro-login-form');
+const error=document.getElementById('cerybro-login-error');
+const key='cerybro_admin_token';
+const originalFetch=window.fetch.bind(window);
+window.fetch=async(resource,options={})=>{
+ const url=typeof resource==='string'?resource:(resource.url||'');
+ const protectedApi=url.startsWith('/api/') && url!='/api/login';
+ if(protectedApi){
+  const token=sessionStorage.getItem(key);
+  if(!token){overlay.style.display='flex';throw new Error('Yönetici girişi gerekli');}
+  const headers=new Headers(options.headers||{});
+  headers.set('Authorization','Bearer '+token);
+  options={...options,headers};
+ }
+ const response=await originalFetch(resource,options);
+ if(protectedApi && response.status===401){
+  sessionStorage.removeItem(key);overlay.style.display='flex';
+ }
+ return response;
+};
+form.addEventListener('submit',async e=>{
+ e.preventDefault();error.textContent='';
+ const button=form.querySelector('button');button.disabled=true;
+ try{
+  const response=await originalFetch('/api/login',{
+   method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({password:document.getElementById('cerybro-admin-password').value})
+  });
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.detail||'Giriş başarısız');
+  sessionStorage.setItem(key,data.access_token);location.reload();
+ }catch(err){error.textContent=err.message;}
+ finally{button.disabled=false;}
+});
+if(sessionStorage.getItem(key))overlay.style.display='none';
+})();
+
+async function cmTestOllama(){
+  const el=document.getElementById("cm-status");
+  el.textContent="Qwen3 1.7B test ediliyor...";
+  try{
+    const r=await cmReq("/api/models/test",{
+      method:"POST",
+      body:JSON.stringify({
+        provider:"ollama",
+        model_name:"qwen3:1.7b",
+        prompt:"Türkçe olarak Cerybro'ya bağlı olduğunu doğrula."
+      })
+    });
+    el.textContent="BAŞARILI: "+(r.response||"Model cevap verdi.");
+  }catch(e){
+    el.textContent="TEST HATASI: "+e.message;
+  }
+}
+</script>
+
+<div class="app">
+<header><div class="user">IK</div><button class="add" onclick="newAgent()">+</button></header>
+<div class="ceo" role="button" tabindex="0" style="cursor:pointer" onclick="openCEOChat()">
+<div class="avatar" style="background:#fa2345">••<div class="star">★</div></div>
+<strong>Cerybro · CEO</strong>
+<small>AI Organization · Yönetim merkezi</small>
+</div>
+<div class="list" id="list"><p style="text-align:center;color:#888">Ajanlar yükleniyor...</p></div>
+</div>
+
+<div class="bottom">
+<button class="qr" onclick="newAgent()">＋</button>
+<div class="search"><span>⌕</span><input id="search" placeholder="Ajan ara..." oninput="filterAgents()"></div>
+</div>
+
+<div class="modal" id="editor">
+<div class="panel">
+<h2 id="formTitle">Yeni ajan oluştur</h2>
+<input type="hidden" id="agentId">
+<div class="field"><label>Ajan adı</label><input id="name" placeholder="Örn. Nova"></div>
+<div class="field"><label>Görev / uzmanlık adı</label><input id="role" placeholder="Örn. Pazar Araştırma Uzmanı"></div>
+<div class="field"><label>Açıklama</label><textarea id="description" rows="2" placeholder="Bu ajan hangi işleri yapacak?"></textarea></div>
+<div class="field"><label>Avatar şekli</label><div class="shapes">
+<button class="choice selected" data-shape="rounded" onclick="pickShape('rounded')">Kare</button>
+<button class="choice" data-shape="circle" onclick="pickShape('circle')">Daire</button>
+<button class="choice" data-shape="hex" onclick="pickShape('hex')">Altıgen</button>
+<button class="choice" data-shape="diamond" onclick="pickShape('diamond')">Elmas</button>
+<button class="choice" data-shape="triangle" onclick="pickShape('triangle')">Üçgen</button>
+</div></div>
+<div class="field"><label>Avatar rengi</label><div class="colors" id="colors"></div></div>
+<div class="field"><label>Avatar sembolü</label><div class="symbols" id="symbols"></div></div>
+<div class="field"><label>Model sağlayıcısı</label><select id="provider"><option value="">Henüz atanmadı</option><option>Gemini</option><option>Claude</option><option>Grok</option><option>OpenAI</option><option>Yerel model</option></select></div>
+<div class="field"><label>Model adı (isteğe bağlı)</label><input id="model" placeholder="Model kimliği"></div>
+<div class="previewbox"><div class="avatar" id="previewAvatar">✦</div><div><strong id="previewName">Yeni Ajan</strong><div id="previewRole" style="font-size:13px;color:#777;margin-top:5px">Uzmanlık</div></div></div>
+<div class="row"><button class="secondary" onclick="closeEditor()">Vazgeç</button><button class="primary" onclick="saveAgent()">Kaydet</button></div>
+</div>
+</div>
+
+<div class="chat" id="chat">
+<div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div><strong id="chatName"></strong><div style="font-size:12px;color:#888">Uzman ajan</div></div></div>
+<div class="chatbody"><div class="notice">Cerybro yapay zekâ bağlantısı aktif. Mesajlarını CEO sistemine gönderebilirsin.</div></div>
+<div class="chatfoot"><input id="message" placeholder="Mesaj yaz..."><button onclick="sendMessage()">Gönder</button></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const API='/api/agents';
+let agents=[],shape='rounded',color='#1685ed',symbol='✦',editing=false;
+const palette=['#1685ed','#f32649','#f39808','#08b5a5','#9255ed','#222222','#e56caa','#70a83b','#795548','#00a5a8'];
+const glyphs=['✦','●','◆','★','⚙','⌘','♟','◈','▲','⬢','☀','✿'];
+
+function toast(t){let x=document.getElementById('toast');x.textContent=t;x.style.display='block';setTimeout(()=>x.style.display='none',2600)}
+function shapeStyle(s){return s==='circle'?'50%':s==='hex'?'22%':s==='diamond'?'8px':'18px'}
+function render(list=agents){
+document.getElementById('list').innerHTML=list.length?list.map(a=>`
+<div class="item">
+<div class="avatar" style="background:${a.color};border-radius:${shapeStyle(a.shape)};${a.shape==='diamond'?'transform:rotate(45deg)':''}" onclick="openChat(${a.id})">${a.symbol}</div>
+<div class="info" onclick="openChat(${a.id})"><div class="name">${esc(a.name)} · ${esc(a.role)}</div><div class="preview">${esc(a.description||'Uzman ajan')}</div></div>
+<div class="actions">
+<button class="smallbtn" onclick="editAgent(${a.id})">Düzenle</button>
+<button class="smallbtn" onclick="pauseAgent(${a.id})">Pasife al</button>
+</div>
+</div>`).join(''):'<p style="text-align:center;color:#888;padding:30px">Henüz ajan bulunmuyor.</p>';
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function loadAgents(){
+    try{
+        const token=sessionStorage.getItem('cerybro_admin_token');
+        if(!token){
+            toast('Yönetici oturumu bulunamadı. Yeniden giriş yap.');
+            return;
+        }
+        const r=await fetch(API+'?include_paused=true',{
+            method:'GET',
+            headers:{'Authorization':'Bearer '+token,'Accept':'application/json'},
+            cache:'no-store'
+        });
+        if(r.status===401){
+            toast('Oturum süresi dolmuş. Yeniden giriş yap.');
+            return;
+        }
+        if(!r.ok) throw new Error('API HTTP '+r.status);
+        const data=await r.json();
+        if(!Array.isArray(data)) throw new Error('Ajan API yanıtı beklenen formatta değil.');
+        agents=data;
+        render();
+    }catch(e){
+        console.error('Cerybro ajan yükleme hatası:',e);
+        toast('Ajanlar yüklenemedi: '+e.message);
+    }
+}
+function filterAgents(){let q=document.getElementById('search').value.toLowerCase();render(agents.filter(a=>(a.name+' '+a.role+' '+a.description).toLowerCase().includes(q)))}
+function setupChoices(){
+document.getElementById('colors').innerHTML=palette.map(c=>`<button class="color" style="background:${c}" onclick="pickColor('${c}')" data-color="${c}"></button>`).join('');
+document.getElementById('symbols').innerHTML=glyphs.map(s=>`<button class="choice" onclick="pickSymbol('${s}')" data-symbol="${s}">${s}</button>`).join('');
+}
+function pickShape(s){shape=s;document.querySelectorAll('[data-shape]').forEach(b=>b.classList.toggle('selected',b.dataset.shape===s));preview()}
+function pickColor(c){color=c;document.querySelectorAll('[data-color]').forEach(b=>b.classList.toggle('selected',b.dataset.color===c));preview()}
+function pickSymbol(s){symbol=s;document.querySelectorAll('[data-symbol]').forEach(b=>b.classList.toggle('selected',b.dataset.symbol===s));preview()}
+function preview(){
+let a=document.getElementById('previewAvatar');a.style.background=color;a.style.borderRadius=shapeStyle(shape);a.textContent=symbol;
+a.style.transform=shape==='diamond'?'rotate(45deg)':'none';
+document.getElementById('previewName').textContent=document.getElementById('name').value||'Yeni Ajan';
+document.getElementById('previewRole').textContent=document.getElementById('role').value||'Uzmanlık';
+}
+function newAgent(){
+editing=false;document.getElementById('formTitle').textContent='Yeni ajan oluştur';
+document.getElementById('agentId').value='';
+['name','role','description','model'].forEach(x=>document.getElementById(x).value='');
+document.getElementById('provider').value='';
+shape='rounded';color='#1685ed';symbol='✦';pickShape(shape);pickColor(color);pickSymbol(symbol);
+document.getElementById('editor').style.display='flex';preview();
+}
+function editAgent(id){
+let a=agents.find(x=>x.id===id);if(!a)return;editing=true;
+document.getElementById('formTitle').textContent='Ajanı düzenle';
+document.getElementById('agentId').value=id;
+document.getElementById('name').value=a.name;
+document.getElementById('role').value=a.role;
+document.getElementById('description').value=a.description||'';
+document.getElementById('model').value=a.model_name||'';
+document.getElementById('provider').value=a.model_provider||'';
+shape=a.shape;color=a.color;symbol=a.symbol;
+pickShape(shape);pickColor(color);pickSymbol(symbol);
+document.getElementById('editor').style.display='flex';preview();
+}
+async function saveAgent(){
+let data={name:document.getElementById('name').value.trim(),role:document.getElementById('role').value.trim(),description:document.getElementById('description').value,color,shape,symbol,model_provider:document.getElementById('provider').value||null,model_name:document.getElementById('model').value||null};
+if(!data.name||!data.role){toast('Ajan adı ve görev adı gerekli.');return}
+try{
+let id=document.getElementById('agentId').value;
+let r=await fetch(id?API+'/'+id:API,{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+let result=await r.json();if(!r.ok)throw Error(result.detail||'Kayıt başarısız');
+closeEditor();await loadAgents();toast(id?'Ajan güncellendi':'Yeni ajan kaydedildi');
+}catch(e){toast(e.message)}
+}
+async function pauseAgent(id){
+if(!confirm('Bu ajanı pasife almak istiyor musun?'))return;
+try{let r=await fetch(API+'/'+id,{method:'DELETE'});if(!r.ok)throw Error();await loadAgents();toast('Ajan pasife alındı')}catch(e){toast('İşlem başarısız')}
+}
+function closeEditor(){document.getElementById('editor').style.display='none'}
+function openCEOChat(){
+  document.getElementById('chatName').textContent='Cerybro · CEO';
+  const av=document.getElementById('chatAvatar');
+  av.textContent='✦';
+  av.style.background='#fa2345';
+  av.style.borderRadius='50%';
+  document.getElementById('chat').style.display='flex';
+}
+function openChat(id){
+let a=agents.find(x=>x.id===id);if(!a)return;
+document.getElementById('chatName').textContent=a.name+' · '+a.role;
+let av=document.getElementById('chatAvatar');av.textContent=a.symbol;av.style.background=a.color;av.style.borderRadius=shapeStyle(a.shape);
+document.getElementById('chat').style.display='flex';
+}
+function closeChat(){document.getElementById('chat').style.display='none'}
+
+async function sendMessage(){
+    const input=document.getElementById('message');
+    const message=input.value.trim();
+    if(!message)return;
+
+    const body=document.querySelector('.chatbody');
+    const conversationId='cerybro-ceo';
+    const token=sessionStorage.getItem('cerybro_admin_token');
+
+    if(!token){
+        toast('Oturum bulunamadı. Yeniden giriş yapmalısın.');
+        return;
+    }
+
+    const addMessage=(role,text)=>{
+        const el=document.createElement('div');
+        el.style.cssText='padding:12px;margin:8px 0;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;'+
+            (role==='user'?'background:#e9f0ff;margin-left:12%;':'background:#f1f1f1;margin-right:8%;');
+        el.textContent=text;
+        body.appendChild(el);
+        body.scrollTop=body.scrollHeight;
+    };
+
+    input.value='';
+    addMessage('user',message);
+    const button=document.querySelector('.chatfoot button');
+    if(button)button.disabled=true;
+
+    try{
+        const response=await fetch('/api/chat',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body:JSON.stringify({
+                message,
+                conversation_id:conversationId,
+                agent_name:document.getElementById('chatName').textContent || 'Cerybro'
+            })
+        });
+        const data=await response.json();
+        if(!response.ok)throw new Error(data.detail||'Mesaj gönderilemedi');
+        addMessage('assistant',data.response);
+    }catch(e){
+        addMessage('assistant','Bağlantı hatası: '+e.message);
+    }finally{
+        if(button)button.disabled=false;
+        input.focus();
+    }
+}
+
+
+async function cmReq(url,opts={}){
+ const t=sessionStorage.getItem('cerybro_admin_token');
+ if(!t)throw Error("Yönetici oturumu bulunamadı. Yeniden giriş yap.");
+ const r=await fetch(url,{
+  ...opts,
+  headers:{
+   Authorization:"Bearer "+t,
+   "Content-Type":"application/json",
+   ...(opts.headers||{})
+  }
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok)throw Error(d.detail||("HTTP "+r.status));
+ return d;
+}
+
+function cmOpen(){
+ document.getElementById("cm-panel").style.display="flex";
+ cmRefresh();
+}
+function cmClose(){
+ document.getElementById("cm-panel").style.display="none";
+}
+
+async function cmRefresh(){
+ const el=document.getElementById("cm-status");
+ el.textContent="Kontrol ediliyor...";
+ try{
+  const d=await cmReq("/api/models/providers");
+  el.textContent=
+   "Desteklenen sağlayıcılar:\n"+d.supported.join(", ")+
+   "\n\nKAYITLI ANAHTARLAR:\n"+
+   (Object.keys(d.configured).length?
+    Object.keys(d.configured).join("\n"):
+    "Henüz API anahtarı kaydedilmedi.");
+ }catch(e){
+  el.textContent=e.message;
+ }
+}
+
+function cmProviderChanged(){
+  const local=document.getElementById("cm-provider").value==="ollama";
+  const key=document.getElementById("cm-key");
+  key.disabled=local;
+  key.placeholder=local?"Ollama için anahtar gerekmez":"API anahtarını buraya gir";
+}
+async function cmSave(){
+ const provider=document.getElementById("cm-provider").value;
+ const key=document.getElementById("cm-key").value.trim();
+ const el=document.getElementById("cm-status");
+
+ if(provider==="ollama"){
+    el.textContent="Ollama kaydediliyor...";
+    try{
+      await cmReq("/api/models/keys/ollama",{method:"PUT",body:JSON.stringify({api_key:"local-ollama-no-key"})});
+      el.textContent="Ollama yerel sağlayıcısı kaydedildi.";
+      await cmRefresh();
+    }catch(e){el.textContent=e.message;}
+    return;
+  }
+  if(key.length<8){
+  el.textContent="Geçerli bir API anahtarı gir.";
+  return;
+ }
+
+ el.textContent="Güvenli kaydediliyor...";
+ try{
+  await cmReq("/api/models/keys/"+provider,{
+   method:"PUT",
+   body:JSON.stringify({api_key:key})
+  });
+  document.getElementById("cm-key").value="";
+  el.textContent="Anahtar şifrelenerek kaydedildi.";
+  await cmRefresh();
+ }catch(e){
+  el.textContent=e.message;
+ }
+}
+
+window.addEventListener('load',()=>{loadAgents();});
+</script>
+
+
+<style>
+#cerybro-ceo-settings-panel {
+  display:none; position:fixed; inset:0; z-index:99999;
+  background:rgba(10,15,25,.72); align-items:center;
+  justify-content:center; padding:18px;
+}
+#cerybro-ceo-settings-panel .cc-box {
+  width:min(440px,100%); background:#fff; color:#202938;
+  border-radius:18px; padding:22px; box-shadow:0 20px 70px #0005;
+}
+#cerybro-ceo-settings-panel label {
+  display:block; margin:14px 0 6px; font-weight:600;
+}
+#cerybro-ceo-settings-panel select,
+#cerybro-ceo-settings-panel input {
+  box-sizing:border-box; width:100%; padding:12px;
+  border:1px solid #d6dce5; border-radius:9px; font-size:15px;
+}
+#cerybro-ceo-settings-panel button {
+  border:0; border-radius:9px; padding:12px 16px;
+  cursor:pointer; font-weight:600;
+}
+#cerybro-ceo-settings-panel .cc-save {
+  background:#1769aa; color:white; flex:1;
+}
+#cerybro-ceo-settings-panel .cc-close {
+  background:#e9edf2; color:#202938;
+}
+#cerybro-ceo-settings-panel .cc-actions {
+  display:flex; gap:10px; margin-top:20px;
+}
+#cerybro-ceo-settings-panel .cc-status {
+  white-space:pre-wrap; font-size:13px; margin-top:12px;
+}
+.cerybro-ceo-settings-btn {
+  position:absolute; right:12px; top:12px; z-index:5;
+  background:#eaf1fa; color:#174d83; border-radius:9px;
+  padding:8px 10px; border:0; cursor:pointer;
+}
+</style>
+
+<div id="cerybro-ceo-settings-panel">
+  <div class="cc-box">
+    <h2 style="margin:0 0 8px">Cerybro CEO Ayarları</h2>
+    <p style="font-size:13px;color:#687386">
+      CEO'nun kullanacağı ana modeli buradan seç.
+    </p>
+    <label for="cerybro-ceo-provider">Model sağlayıcısı</label>
+    <select id="cerybro-ceo-provider">
+      <option value="gemini">Gemini</option>
+      <option value="claude">Claude</option>
+      <option value="grok">Grok</option>
+      <option value="openai">OpenAI</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="ollama">Yerel model</option>
+    </select>
+    <label for="cerybro-ceo-model">Model adı</label>
+    <input id="cerybro-ceo-model" maxlength="120"
+      placeholder="Örn. gemini-2.5-flash">
+<label for="cerybro-ceo-api-key">API Anahtarı</label>
+<input id="cerybro-ceo-api-key" type="password" autocomplete="new-password"
+       placeholder="API anahtarınızı buraya girin">
+<div style="font-size:12px;color:#687386;margin-top:5px">
+  Anahtar güvenli şekilde mevcut model kayıt sistemine gönderilir.
+</div>
+<button type="button" class="cc-save" style="width:100%;margin-top:10px"
+        onclick="saveCerybroCEOApiKey()">API Anahtarını Kaydet</button>
+
+    <div id="cerybro-ceo-status" class="cc-status"></div>
+    <div class="cc-actions">
+      <button class="cc-close" onclick="closeCerybroCEOSettings()">Kapat</button>
+      <button class="cc-save" onclick="saveCerybroCEOSettings()">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const defaults = {
+    gemini:"gemini-2.5-flash",
+    claude:"claude-sonnet-4-5",
+    grok:"grok-3-mini",
+    openai:"gpt-4.1-mini",
+    openrouter:"openrouter/auto",
+    ollama:"qwen3:1.7b"
+  };
+
+  window.openCerybroCEOSettings = async function(){
+    const panel=document.getElementById("cerybro-ceo-settings-panel");
+    panel.style.display="flex";
+    const status=document.getElementById("cerybro-ceo-status");
+    status.textContent="Ayarlar yükleniyor...";
+    try {
+      const data=await cmReq("/api/ceo/settings");
+      document.getElementById("cerybro-ceo-provider").value=data.provider;
+      document.getElementById("cerybro-ceo-model").value=data.model_name;
+      status.textContent="Kayıtlı anahtarlar: "+data.configured.join(", ");
+    } catch(e) {
+      status.textContent="Ayarlar alınamadı: "+e.message;
+    }
+  };
+
+  
+window.saveCerybroCEOApiKey = async function(){
+  const providerEl=document.getElementById("cerybro-ceo-provider");
+  const input=document.getElementById("cerybro-ceo-api-key");
+  if(!providerEl || !input){
+    alert("Sağlayıcı veya API anahtarı alanı bulunamadı.");
+    return;
+  }
+
+  const provider=providerEl.value;
+  let status=document.getElementById("cerybro-ceo-status");
+
+  if(!status){
+    status=document.createElement("div");
+    status.id="cerybro-ceo-status";
+    status.className="cc-status";
+    input.insertAdjacentElement("afterend",status);
+  }
+
+  const key=input.value.trim();
+  if(provider==="ollama"){
+    status.textContent="Yerel Ollama için API anahtarı gerekmiyor.";
+    return;
+  }
+  if(key.length<8){
+    status.textContent="Geçerli bir API anahtarı girin.";
+    return;
+  }
+
+  status.textContent="API anahtarı kaydediliyor...";
+  try{
+    await cmReq("/api/models/keys/"+encodeURIComponent(provider),{
+      method:"PUT",
+      body:JSON.stringify({api_key:key})
+    });
+    input.value="";
+    status.textContent=provider+" API anahtarı başarıyla kaydedildi.";
+  }catch(e){
+    status.textContent="Kayıt başarısız: "+(e && e.message ? e.message : String(e));
+  }
+};
+
+window.closeCerybroCEOSettings = function(){
+    document.getElementById("cerybro-ceo-settings-panel").style.display="none";
+  };
+
+  window.saveCerybroCEOSettings = async function(){
+    const provider=document.getElementById("cerybro-ceo-provider").value;
+    const model_name=document.getElementById("cerybro-ceo-model").value.trim();
+    const status=document.getElementById("cerybro-ceo-status");
+    if(!model_name){status.textContent="Model adını gir.";return;}
+    status.textContent="Kaydediliyor...";
+    try {
+      await cmReq("/api/ceo/settings",{
+        method:"PUT",
+        body:JSON.stringify({provider,model_name})
+      });
+      status.textContent="CEO modeli kaydedildi: "+provider+" / "+model_name;
+    } catch(e) {
+      status.textContent="Kayıt başarısız: "+e.message;
+    }
+  };
+
+  window.addEventListener("load",function(){
+    const card=document.querySelector(".ceo");
+    if(!card || card.querySelector(".cerybro-ceo-settings-btn")) return;
+    if(getComputedStyle(card).position==="static") card.style.position="relative";
+    const button=document.createElement("button");
+    button.className="cerybro-ceo-settings-btn";
+    button.type="button";
+    button.textContent="⚙ CEO Ayarları";
+    button.onclick=function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      openCerybroCEOSettings();
+    };
+    card.appendChild(button);
+
+    const provider=document.getElementById("cerybro-ceo-provider");
+    const model=document.getElementById("cerybro-ceo-model");
+    provider.addEventListener("change",function(){
+      model.value=defaults[provider.value] || "";
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
