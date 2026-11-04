@@ -4,3 +4,4 @@ asyncpg>=0.30,<1.0
 redis>=5.0,<7.0
 litellm
 cryptography
+webauthn>=2.2,<3

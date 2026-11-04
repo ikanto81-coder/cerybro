@@ -367,7 +367,7 @@ async def admin_login_removed():
 @app.middleware("http")
 async def cerybro_auth_guard(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and path not in ("/api/login", "/api/auth/google", "/api/auth/config"):
+    if path.startswith("/api/") and path not in ("/api/login", "/api/auth/google", "/api/auth/config", "/api/auth/passkey/options", "/api/auth/passkey/verify"):
         header = request.headers.get("authorization", "")
         token = header[7:].strip() if header.lower().startswith("bearer ") else ""
         if not _valid_token(token):
@@ -800,6 +800,164 @@ async def save_profile(data: ProfileInput):
         json.dumps(payload),
     )
     return {"status": "saved", **payload}
+
+
+# ------------------------------------------------------- PARMAK İZİ (WEBAUTHN)
+import secrets as _secrets
+from webauthn import (
+    generate_registration_options, verify_registration_response,
+    generate_authentication_options, verify_authentication_response, options_to_json,
+)
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria, AuthenticatorAttachment, ResidentKeyRequirement,
+    UserVerificationRequirement, PublicKeyCredentialDescriptor,
+)
+
+WEBAUTHN_RP_ID = os.environ.get("CERYBRO_RP_ID", "cerybro.cairakuzey.cloud")
+WEBAUTHN_ORIGIN = os.environ.get("CERYBRO_ORIGIN", "https://cerybro.cairakuzey.cloud")
+WEBAUTHN_USER_ID = hashlib.sha256(("cerybro:" + ADMIN_EMAIL).encode()).digest()[:16]
+
+
+async def _ensure_passkey_table():
+    await db_pool.execute(
+        "CREATE TABLE IF NOT EXISTS cerybro_passkeys ("
+        "id SERIAL PRIMARY KEY, credential_id TEXT UNIQUE NOT NULL, public_key TEXT NOT NULL, "
+        "sign_count BIGINT NOT NULL DEFAULT 0, owner_email TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', "
+        "created_at TIMESTAMPTZ DEFAULT NOW(), last_used_at TIMESTAMPTZ)"
+    )
+
+
+async def _put_challenge(kind, challenge):
+    cid = _secrets.token_urlsafe(18)
+    await redis_client.set("cerybro:wa:" + kind + ":" + cid, bytes_to_base64url(challenge), ex=300)
+    return cid
+
+
+async def _take_challenge(kind, cid):
+    key = "cerybro:wa:" + kind + ":" + str(cid or "")[:64]
+    val = await redis_client.getdel(key)
+    if not val:
+        raise HTTPException(400, "Doğrulama süresi doldu, tekrar deneyin.")
+    if isinstance(val, bytes):
+        val = val.decode()
+    return base64url_to_bytes(val)
+
+
+class PasskeyFinish(BaseModel):
+    challenge_id: str = Field(min_length=8, max_length=64)
+    credential: dict
+    label: str = Field(default="", max_length=80)
+
+
+@app.post("/api/passkeys/register/options")
+async def passkey_register_options():
+    await _ensure_passkey_table()
+    rows = await db_pool.fetch("SELECT credential_id FROM cerybro_passkeys")
+    opts = generate_registration_options(
+        rp_id=WEBAUTHN_RP_ID, rp_name="Cerybro",
+        user_id=WEBAUTHN_USER_ID, user_name=ADMIN_EMAIL, user_display_name="İsmail Kanto",
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+        exclude_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["credential_id"])) for r in rows],
+    )
+    cid = await _put_challenge("reg", opts.challenge)
+    return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
+
+
+@app.post("/api/passkeys/register/verify")
+async def passkey_register_verify(data: PasskeyFinish):
+    await _ensure_passkey_table()
+    challenge = await _take_challenge("reg", data.challenge_id)
+    try:
+        v = verify_registration_response(
+            credential=data.credential, expected_challenge=challenge,
+            expected_rp_id=WEBAUTHN_RP_ID, expected_origin=WEBAUTHN_ORIGIN,
+            require_user_verification=True,
+        )
+    except Exception:
+        raise HTTPException(400, "Parmak izi kaydı doğrulanamadı.")
+    await db_pool.execute(
+        "INSERT INTO cerybro_passkeys (credential_id, public_key, sign_count, owner_email, label) "
+        "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (credential_id) DO NOTHING",
+        bytes_to_base64url(v.credential_id), bytes_to_base64url(v.credential_public_key),
+        int(v.sign_count), ADMIN_EMAIL, (data.label or "Cihaz").strip()[:80],
+    )
+    return {"status": "registered"}
+
+
+@app.get("/api/passkeys")
+async def passkey_list():
+    await _ensure_passkey_table()
+    rows = await db_pool.fetch(
+        "SELECT id, label, sign_count, created_at, last_used_at FROM cerybro_passkeys ORDER BY id"
+    )
+    return [dict(r) for r in rows]
+
+
+@app.delete("/api/passkeys/{pk_id}")
+async def passkey_delete(pk_id: int):
+    await _ensure_passkey_table()
+    r = await db_pool.execute("DELETE FROM cerybro_passkeys WHERE id=$1", pk_id)
+    if r.endswith(" 0"):
+        raise HTTPException(404, "Kayıt bulunamadı")
+    return {"status": "deleted"}
+
+
+@app.post("/api/auth/passkey/options")
+async def passkey_login_options():
+    await _ensure_passkey_table()
+    rows = await db_pool.fetch("SELECT credential_id FROM cerybro_passkeys WHERE owner_email=$1", ADMIN_EMAIL)
+    if not rows:
+        raise HTTPException(404, "Kayıtlı parmak izi yok")
+    opts = generate_authentication_options(
+        rp_id=WEBAUTHN_RP_ID,
+        allow_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["credential_id"])) for r in rows],
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    cid = await _put_challenge("auth", opts.challenge)
+    return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
+
+
+@app.post("/api/auth/passkey/verify")
+async def passkey_login_verify(data: PasskeyFinish, request: Request):
+    await _ensure_passkey_table()
+    keys = ["cerybro:login_fail:ip:" + _client_ip(request), "cerybro:login_fail:all"]
+    if await _login_keys_blocked(keys):
+        raise HTTPException(429, "Çok fazla hatalı deneme. 15 dakika sonra tekrar dene.")
+    fail = HTTPException(403, "Parmak izi doğrulanamadı")
+    try:
+        challenge = await _take_challenge("auth", data.challenge_id)
+    except HTTPException:
+        await _login_record_failure(keys)
+        raise fail
+    cred_id = str(data.credential.get("id") or data.credential.get("rawId") or "")
+    row = await db_pool.fetchrow(
+        "SELECT id, public_key, sign_count FROM cerybro_passkeys WHERE credential_id=$1 AND owner_email=$2",
+        cred_id, ADMIN_EMAIL,
+    )
+    if not row:
+        await _login_record_failure(keys)
+        raise fail
+    try:
+        v = verify_authentication_response(
+            credential=data.credential, expected_challenge=challenge,
+            expected_rp_id=WEBAUTHN_RP_ID, expected_origin=WEBAUTHN_ORIGIN,
+            credential_public_key=base64url_to_bytes(row["public_key"]),
+            credential_current_sign_count=int(row["sign_count"]),
+            require_user_verification=True,
+        )
+    except Exception:
+        await _login_record_failure(keys)
+        raise fail
+    await db_pool.execute(
+        "UPDATE cerybro_passkeys SET sign_count=$1, last_used_at=NOW() WHERE id=$2",
+        int(v.new_sign_count), row["id"],
+    )
+    return {"access_token": _new_token(), "token_type": "bearer", "expires_in": TOKEN_TTL}
 
 
 # --------------------------------------------------------------- CEO SOHBETİ

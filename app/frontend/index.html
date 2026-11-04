@@ -110,11 +110,22 @@ header{height:90px;display:flex;align-items:center;justify-content:space-between
 <div id="cerybro-login-overlay" style="position:fixed;inset:0;z-index:99999;background:#f8f8f7;display:flex;align-items:center;justify-content:center;padding:22px;font-family:Arial,sans-serif">
 <div id="cerybro-login-form" style="width:100%;max-width:390px;background:white;padding:28px;border:1px solid #ddd;border-radius:20px;text-align:center">
 <h2>Cerybro</h2><p>Yönetici girişi</p>
+<button id="cerybro-pk-login" type="button" style="display:none;width:100%;padding:15px;margin-bottom:14px;background:#222;color:white;border:0;border-radius:10px;font-size:16px">☝ Parmak izi ile giriş</button>
 <div id="cerybro-google-btn" style="display:flex;justify-content:center;min-height:44px"></div>
 <div id="cerybro-login-error" style="color:#b42318;margin-top:12px"></div>
 </div></div>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
+const wa={
+ b2u:b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),
+ u2b:s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return Uint8Array.from(atob(s),c=>c.charCodeAt(0)).buffer},
+ creOpts(o){return {...o,challenge:wa.u2b(o.challenge),user:{...o.user,id:wa.u2b(o.user.id)},excludeCredentials:(o.excludeCredentials||[]).map(c=>({...c,id:wa.u2b(c.id)}))}},
+ reqOpts(o){return {...o,challenge:wa.u2b(o.challenge),allowCredentials:(o.allowCredentials||[]).map(c=>({...c,id:wa.u2b(c.id)}))}},
+ toJSON(c){const r=c.response,o={id:c.id,rawId:wa.b2u(c.rawId),type:c.type,clientExtensionResults:c.getClientExtensionResults?c.getClientExtensionResults():{},response:{clientDataJSON:wa.b2u(r.clientDataJSON)}};
+  if(r.attestationObject){o.response.attestationObject=wa.b2u(r.attestationObject);if(r.getTransports)o.response.transports=r.getTransports();o.authenticatorAttachment=c.authenticatorAttachment||'platform'}
+  else{o.response.authenticatorData=wa.b2u(r.authenticatorData);o.response.signature=wa.b2u(r.signature);if(r.userHandle)o.response.userHandle=wa.b2u(r.userHandle)}
+  return o}
+};
 (()=>{
 const overlay=document.getElementById('cerybro-login-overlay');
 const error=document.getElementById('cerybro-login-error');
@@ -142,7 +153,7 @@ async function onGoogle(resp){
   const r=await originalFetch('/api/auth/google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(r.status===403?'Bu Google hesabının yetkisi yok.':(d.detail||'Giriş başarısız'));
-  sessionStorage.setItem(key,d.access_token);location.reload();
+  sessionStorage.setItem(key,d.access_token);sessionStorage.setItem('cerybro_offer_pk','1');location.reload();
  }catch(err){error.textContent=err.message;}
 }
 async function initGoogle(){
@@ -154,7 +165,27 @@ async function initGoogle(){
   go();
  }catch(e){error.textContent='Google girişi yüklenemedi.';}
 }
-if(!sessionStorage.getItem(key))initGoogle();
+if(!sessionStorage.getItem(key)){initGoogle();
+ const pkb=document.getElementById('cerybro-pk-login');
+ if(window.PublicKeyCredential&&PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable){
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(ok=>{if(ok)pkb.style.display='block'}).catch(()=>{});
+ }
+ pkb.onclick=async()=>{
+  error.textContent='';pkb.disabled=true;
+  try{
+   const o=await originalFetch('/api/auth/passkey/options',{method:'POST'});
+   const od=await o.json().catch(()=>({}));
+   if(o.status===404)throw new Error('Bu cihazda parmak izi kayıtlı değil. Google ile girip profilden etkinleştirin.');
+   if(!o.ok)throw new Error(od.detail||'Parmak izi başlatılamadı');
+   const cred=await navigator.credentials.get({publicKey:wa.reqOpts(od.options)});
+   const r=await originalFetch('/api/auth/passkey/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({challenge_id:od.challenge_id,credential:wa.toJSON(cred)})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok)throw new Error(d.detail||'Parmak izi doğrulanamadı');
+   sessionStorage.setItem(key,d.access_token);location.reload();
+  }catch(err){error.textContent=err.name==='NotAllowedError'?'Parmak izi iptal edildi.':err.message;}
+  finally{pkb.disabled=false;}
+ };
+}
 if(sessionStorage.getItem(key))overlay.style.display='none';
 })();
 
@@ -229,6 +260,8 @@ async function cmTestOllama(){
 <div class="field"><label>Telefon</label><input id="pf_phone" type="tel" maxlength="40"></div>
 <div class="field"><label>Dil</label><select id="pf_language"><option value="tr">Türkçe</option><option value="en">English</option></select></div>
 <div class="field"><label>Notlar</label><textarea id="pf_notes" rows="3" maxlength="2000"></textarea></div>
+<div class="field"><label>Parmak izi ile giriş</label><div id="pk_list" style="font-size:13px;color:#555"></div>
+<button class="secondary" type="button" id="pk_enable" style="margin-top:8px;width:100%" onclick="enablePasskey()">☝ Parmak izi ile girişi etkinleştir</button></div>
 <div id="pf_status" style="font-size:13px;color:#555;min-height:18px"></div>
 <div class="row"><button class="secondary" type="button" onclick="cerybroLogout()">Çıkış yap</button><button class="secondary" type="button" onclick="closeProfile()">Kapat</button><button class="primary" type="button" onclick="saveProfile()">Kaydet</button></div>
 </div>
@@ -481,8 +514,41 @@ const PF=['full_name','title','email','phone','language','notes'];
 async function openProfile(){
  document.getElementById('profile').style.display='flex';
  const s=document.getElementById('pf_status');s.textContent='Yükleniyor...';
- try{const d=await cmReq('/api/profile');PF.forEach(k=>document.getElementById('pf_'+k).value=d[k]??(k==='language'?'tr':''));s.textContent='';
+ try{const d=await cmReq('/api/profile');PF.forEach(k=>document.getElementById('pf_'+k).value=d[k]??(k==='language'?'tr':''));s.textContent='';loadPasskeys();
   if(d.full_name)setIk(d.full_name)}catch(e){s.textContent='Profil alınamadı: '+e.message}
+}
+async function loadPasskeys(){
+ const el=document.getElementById('pk_list');
+ try{const l=await cmReq('/api/passkeys');
+  el.innerHTML=l.length?l.map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee"><span>${esc(p.label||'Cihaz')} · ${new Date(p.created_at).toLocaleDateString('tr')}</span><button class="smallbtn" type="button" onclick="removePasskey(${p.id})">Kaldır</button></div>`).join(''):'Kayıtlı parmak izi yok.';
+  return l}catch(e){el.textContent='Liste alınamadı: '+e.message;return null}
+}
+async function enablePasskey(){
+ const s=document.getElementById('pf_status');
+ if(!window.PublicKeyCredential){s.textContent='Bu tarayıcı parmak izi girişini desteklemiyor.';return false}
+ s.textContent='Parmak izi kaydı başlatılıyor...';
+ try{
+  const o=await cmReq('/api/passkeys/register/options',{method:'POST'});
+  const cred=await navigator.credentials.create({publicKey:wa.creOpts(o.options)});
+  const label=(/iPhone|iPad/.test(navigator.userAgent)?'iPhone':/Android/.test(navigator.userAgent)?'Android':/Mac/.test(navigator.userAgent)?'Mac':'Bilgisayar');
+  await cmReq('/api/passkeys/register/verify',{method:'POST',body:JSON.stringify({challenge_id:o.challenge_id,credential:wa.toJSON(cred),label})});
+  s.textContent='Parmak izi ile giriş etkinleştirildi.';toast('Parmak izi etkinleştirildi');await loadPasskeys();return true;
+ }catch(e){s.textContent=e.name==='InvalidStateError'?'Bu cihaz zaten kayıtlı.':e.name==='NotAllowedError'?'İşlem iptal edildi.':'Kayıt başarısız: '+e.message;return false}
+}
+async function removePasskey(id){
+ if(!confirm('Bu parmak izi kaydı kaldırılsın mı?'))return;
+ try{await cmReq('/api/passkeys/'+id,{method:'DELETE'});toast('Kaldırıldı');await loadPasskeys()}catch(e){toast('Kaldırılamadı: '+e.message)}
+}
+async function offerPasskey(){
+ if(sessionStorage.getItem('cerybro_offer_pk')!=='1')return;sessionStorage.removeItem('cerybro_offer_pk');
+ try{if(!window.PublicKeyCredential||!(await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()))return;
+  const l=await cmReq('/api/passkeys');if(l.length)return;
+  const b=document.createElement('div');b.id='pk_offer';
+  b.style.cssText='position:fixed;left:12px;right:12px;bottom:90px;max-width:520px;margin:auto;background:#222;color:#fff;border-radius:14px;padding:14px;z-index:50;display:flex;gap:10px;align-items:center';
+  b.innerHTML='<span style="flex:1">Sonraki girişlerde parmak izi kullanılsın mı?</span><button class="primary" type="button" id="pk_offer_yes">Parmak izi ile girişi etkinleştir</button><button class="secondary" type="button" onclick="this.parentNode.remove()">Sonra</button>';
+  document.body.appendChild(b);
+  document.getElementById('pk_offer_yes').onclick=async()=>{openProfile();const ok=await enablePasskey();if(ok)b.remove()};
+ }catch(e){}
 }
 function closeProfile(){document.getElementById('profile').style.display='none'}
 async function saveProfile(){
@@ -492,7 +558,7 @@ async function saveProfile(){
 }
 function setIk(n){const p=String(n||'').trim().split(/\s+/).filter(Boolean);if(p.length)document.getElementById('ikBtn').textContent=(p[0][0]+(p.length>1?p[p.length-1][0]:'')).toLocaleUpperCase('tr')}
 function cerybroLogout(){sessionStorage.removeItem('cerybro_admin_token');location.reload()}
-window.addEventListener('load',()=>{loadAgents();});
+window.addEventListener('load',()=>{loadAgents();offerPasskey();});
 </script>
 
 
