@@ -255,7 +255,7 @@ async function cmTestOllama(){
 <div class="field"><label>Açıklama</label><textarea id="description" rows="2" placeholder="Bu ajan hangi işleri yapacak?"></textarea></div>
 <div class="field"><label>Şekil değiştir</label><div class="shapes" id="shapes"></div></div>
 <div class="field"><label>Avatar rengi</label><div class="colors" id="colors"></div></div>
-<div class="field"><label>Model sağlayıcısı</label><select id="provider"><option value="">Henüz atanmadı</option><option>Gemini</option><option>Claude</option><option>Grok</option><option>OpenAI</option><option>Yerel model</option></select></div>
+<div class="field"><label>Model sağlayıcısı</label><select id="provider"><option value="">Henüz atanmadı</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="grok">Grok</option><option value="openai">OpenAI</option><option value="kimi">Kimi</option><option value="openrouter">OpenRouter</option><option value="ollama">Yerel model</option></select></div>
 <div class="field"><label>Model adı (isteğe bağlı)</label><input id="model" placeholder="Model kimliği"></div>
 <div class="previewbox"><div class="avatar" id="previewAvatar">✦</div><div><strong id="previewName">Yeni Ajan</strong><div id="previewRole" style="font-size:13px;color:#777;margin-top:5px">Uzmanlık</div></div></div>
 <div class="row"><button class="secondary" onclick="closeEditor()">Vazgeç</button><button class="primary" onclick="saveAgent()">Kaydet</button></div>
@@ -713,11 +713,12 @@ window.addEventListener('load',()=>{setupChoices();loadAgents();offerPasskey();}
       <option value="grok">Grok</option>
       <option value="openai">OpenAI</option>
       <option value="openrouter">OpenRouter</option>
+      <option value="kimi">Kimi (Moonshot)</option>
       <option value="ollama">Yerel model</option>
     </select>
     <label for="cerybro-ceo-model">Model adı</label>
     <input id="cerybro-ceo-model" maxlength="120"
-      placeholder="Örn. gemini-2.5-flash">
+      placeholder="Örn. gemini-2.5-flash" list="ceoModelList"><datalist id="ceoModelList"></datalist><div id="ollamaPull" style="display:none;font-size:12px;margin-top:6px"></div>
 <label for="cerybro-ceo-api-key">API Anahtarı</label>
 <input id="cerybro-ceo-api-key" type="password" autocomplete="new-password"
        placeholder="API anahtarınızı buraya girin">
@@ -739,10 +740,11 @@ window.addEventListener('load',()=>{setupChoices();loadAgents();offerPasskey();}
 (function(){
   const defaults = {
     gemini:"gemini-2.5-flash",
-    claude:"claude-sonnet-4-5",
+    claude:"claude-sonnet-4-6",
     grok:"grok-3-mini",
     openai:"gpt-4.1-mini",
     openrouter:"openrouter/auto",
+    kimi:"kimi-k3",
     ollama:"qwen3:1.7b"
   };
 
@@ -848,5 +850,16 @@ window.closeCerybroCEOSettings = function(){
 })();
 </script>
 
+<script>
+window.cbProv=function(v){v=(v||"").toLowerCase();return v.startsWith("yerel")?"ollama":v;};
+window.cbFillModels=async function(prov,listId){const dl=document.getElementById(listId);if(!dl)return;dl.innerHTML="";prov=cbProv(prov);if(!prov)return;
+ try{const d=await cmReq("/api/models/catalog/"+prov);(d.models||[]).forEach(m=>{const o=document.createElement("option");o.value=m;dl.appendChild(o);});
+ const op=document.getElementById("ollamaPull");if(op&&listId==="ceoModelList"){if(prov==="ollama"){op.style.display="block";op.innerHTML="Kurulu: "+((d.models||[]).join(", ")||"yok")+"<br>Küçük model indir: ";(d.pullable||[]).forEach(x=>{const b=document.createElement("button");b.type="button";b.textContent=x;b.style.margin="2px";b.onclick=async()=>{b.disabled=true;b.textContent=x+" indiriliyor…";await cmReq("/api/models/ollama/pull",{method:"POST",body:JSON.stringify({model:x})});};op.appendChild(b);});}else op.style.display="none";}}catch(e){}};
+window.addEventListener("load",()=>{const m=document.getElementById("model");if(m&&!m.getAttribute("list")){m.setAttribute("list","agentModelList");const dl=document.createElement("datalist");dl.id="agentModelList";m.after(dl);}
+ const p=document.getElementById("provider");if(p){p.addEventListener("change",()=>cbFillModels(p.value,"agentModelList"));p.addEventListener("focus",()=>cbFillModels(p.value,"agentModelList"));}
+ const c=document.getElementById("cerybro-ceo-provider");if(c){c.addEventListener("change",()=>cbFillModels(c.value,"ceoModelList"));}
+ const cm=document.getElementById("cerybro-ceo-model");if(cm)cm.addEventListener("focus",()=>cbFillModels(document.getElementById("cerybro-ceo-provider").value,"ceoModelList"));
+ const am=document.getElementById("model");if(am)am.addEventListener("focus",()=>cbFillModels(document.getElementById("provider").value,"agentModelList"));});
+</script>
 </body>
 </html>

@@ -68,6 +68,7 @@ MODEL_PROVIDERS = {
     "openai": "openai",
     "grok": "xai",
     "openrouter": "openrouter",
+    "kimi": "moonshot",
     "ollama": "ollama",
 }
 
@@ -762,6 +763,7 @@ def _cerybro_default_model(provider):
         "openai": "gpt-4.1-mini",
         "grok": "grok-3-mini",
         "openrouter": "openrouter/auto",
+        "kimi": "kimi-k3",
         "ollama": "qwen3:1.7b",
     }
     env_name = "CERYBRO_" + provider.upper() + "_MODEL"
@@ -798,7 +800,8 @@ async def _cerybro_completion(messages, provider=None, model_name=None,
                               max_tokens=1200):
     import litellm
 
-    provider = provider or os.getenv("CERYBRO_CEO_PROVIDER", "gemini")
+    provider = (provider or os.getenv("CERYBRO_CEO_PROVIDER", "gemini")).strip().lower()
+    provider = {"yerel model": "ollama", "moonshot": "kimi", "chatgpt": "openai", "xai": "grok"}.get(provider, provider)
     api_key = await _get_api_key(provider)
     model_name = model_name or _cerybro_default_model(provider)
     if not model_name:
@@ -817,6 +820,9 @@ async def _cerybro_completion(messages, provider=None, model_name=None,
     else:
         model = MODEL_PROVIDERS[provider] + "/" + model_name
         kwargs["api_key"] = api_key
+        if provider == "kimi":
+            model = "openai/" + model_name  # Moonshot OpenAI uyumlu uç nokta
+            kwargs["api_base"] = "https://api.moonshot.ai/v1"
 
     response = await litellm.acompletion(model=model, **kwargs)
     answer = response.choices[0].message.content
@@ -826,6 +832,115 @@ async def _cerybro_completion(messages, provider=None, model_name=None,
 
 
 cerybro_completion = _cerybro_completion  # diğer modüller bu adı kullanıyor olabilir
+
+
+# ---- Canlı model kataloğu (sağlayıcı API'lerinden, önbellekli) ----
+_MODEL_CACHE = {}
+# Anahtar yoksa resmi dokümanlardan derlenen liste (Kasım 2026); emekli modeller yok
+CURATED_MODELS = {
+    "claude": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-4-6",
+               "claude-haiku-4-5-20251001"],
+    "gemini": ["gemini-3.8-flash", "gemini-4-argon", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite",
+               "gemini-3.6-flash", "gemini-3-flash-preview", "gemini-2.5-flash"],
+    "openai": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-6-sol"],
+    "grok": ["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1"],
+    "kimi": ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6"],
+    "openrouter": ["openrouter/auto"],
+}
+OLLAMA_SMALL_MODELS = ["qwen3:0.6b", "qwen3:1.7b", "llama3.2:1b", "gemma3:1b", "smollm2:360m"]
+_OLLAMA_PULLS = {}
+# Listede görünse de canlı çağrıda 404 dönen (emekli) modeller — 2026-11-04 testi
+_RETIRED = {"gemini-2.5-pro", "gemini-2.5-flash-lite", "claude-sonnet-4-5", "claude-sonnet-4-5-20250929"}
+_MODEL_TTL = 6 * 3600
+_GEMINI_SKIP = ("tts", "image", "lyria", "robotics", "computer-use", "antigravity",
+                "deep-research", "transcribe", "nano-banana", "embedding", "aqa")
+
+
+async def _fetch_models(provider):
+    import httpx
+    async with httpx.AsyncClient(timeout=20) as c:
+        if provider == "ollama":
+            r = await c.get(OLLAMA_API_BASE.rstrip("/") + "/api/tags")
+            return [m["name"] for m in r.json().get("models", [])]
+        key = await _get_api_key(provider)
+        if provider == "claude":
+            r = await c.get("https://api.anthropic.com/v1/models?limit=1000",
+                            headers={"x-api-key": key, "anthropic-version": "2023-06-01"})
+            r.raise_for_status()
+            return [m["id"] for m in r.json().get("data", [])]
+        if provider == "gemini":
+            r = await c.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+                            headers={"x-goog-api-key": key})
+            r.raise_for_status()
+            out = []
+            for m in r.json().get("models", []):
+                n = m["name"].split("/", 1)[-1]
+                if "generateContent" in m.get("supportedGenerationMethods", []) and \
+                        not any(s in n for s in _GEMINI_SKIP) and n not in _RETIRED:
+                    out.append(n)
+            return out
+        urls = {"openai": "https://api.openai.com/v1/models", "grok": "https://api.x.ai/v1/models",
+                "kimi": "https://api.moonshot.ai/v1/models",
+                "openrouter": "https://openrouter.ai/api/v1/models"}
+        r = await c.get(urls[provider], headers={"Authorization": "Bearer " + key})
+        r.raise_for_status()
+        ids = [m["id"] for m in r.json().get("data", [])]
+        if provider == "grok":
+            ids = [i for i in ids if "imagine" not in i and "image" not in i and "voice" not in i]
+        if provider == "openai":
+            ids = [i for i in ids if i.startswith(("gpt-", "o1", "o3", "o4", "o5", "chatgpt"))
+                   and not any(s in i for s in ("audio", "realtime", "tts", "transcribe", "image", "search"))]
+        return ids
+
+
+@app.get("/api/models/catalog/{provider}")
+async def model_catalog(provider: str, refresh: bool = False):
+    if provider not in MODEL_PROVIDERS:
+        raise HTTPException(400, "Desteklenmeyen sağlayıcı")
+    hit = _MODEL_CACHE.get(provider)
+    if hit and not refresh and time.time() - hit[0] < _MODEL_TTL:
+        return {"provider": provider, "models": hit[1], "cached": True}
+    try:
+        models = await _fetch_models(provider)
+    except MissingKeyError:
+        return {"provider": provider, "models": CURATED_MODELS.get(provider, []),
+                "source": "curated", "note": "API anahtarı yok; resmi dokümanlardan derlenen liste"}
+    except Exception as exc:
+        if hit:
+            return {"provider": provider, "models": hit[1], "cached": True, "stale": True}
+        return {"provider": provider, "models": CURATED_MODELS.get(provider, []), "source": "curated",
+                "error": str(exc)[:200]}
+    models = [x for x in models if x not in _RETIRED]
+    _MODEL_CACHE[provider] = (time.time(), models)
+    out = {"provider": provider, "models": models, "cached": False, "source": "live"}
+    if provider == "ollama":
+        out["pullable"] = [x for x in OLLAMA_SMALL_MODELS if x not in models]
+        out["pulling"] = _OLLAMA_PULLS
+    return out
+
+
+class OllamaPullInput(BaseModel):
+    model: str
+
+
+@app.post("/api/models/ollama/pull")
+async def ollama_pull(data: OllamaPullInput):
+    if data.model not in OLLAMA_SMALL_MODELS:
+        raise HTTPException(400, "Sadece listedeki küçük modeller indirilebilir")
+    import httpx
+
+    async def run():
+        _OLLAMA_PULLS[data.model] = "indiriliyor"
+        try:
+            async with httpx.AsyncClient(timeout=None) as c:
+                r = await c.post(OLLAMA_API_BASE.rstrip("/") + "/api/pull",
+                                 json={"model": data.model, "stream": False})
+                _OLLAMA_PULLS[data.model] = "tamam" if r.status_code == 200 else "hata " + str(r.status_code)
+        except Exception as exc:
+            _OLLAMA_PULLS[data.model] = "hata " + str(exc)[:80]
+        _MODEL_CACHE.pop("ollama", None)
+    asyncio.create_task(run())
+    return {"status": "started", "model": data.model}
 
 
 @app.get("/api/models/providers")
