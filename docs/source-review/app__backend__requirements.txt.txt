@@ -1,0 +1,6 @@
+00001 | fastapi>=0.115,<1.0
+00002 | uvicorn[standard]>=0.34,<1.0
+00003 | asyncpg>=0.30,<1.0
+00004 | redis>=5.0,<7.0
+00005 | litellm
+00006 | cryptography

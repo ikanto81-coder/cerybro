@@ -51,6 +51,7 @@ services:
     container_name: cerybro-api
     volumes:
       - /opt/ai-ceo/data/uploads:/data/uploads
+      - /opt/ai-ceo/data/agents:/data/agents
       - /opt/ai-ceo/backups/deleted-agents:/data/deleted-agents
       - /opt/ai-ceo/backups/agents:/data/agent-backups
     restart: unless-stopped
@@ -85,4 +86,3 @@ networks:
     external: true
   cerybro-public:
     driver: bridge
- 

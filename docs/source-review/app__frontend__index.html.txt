@@ -1,0 +1,421 @@
+00001 | <!DOCTYPE html>
+00002 | <html lang="tr">
+00003 | <head>
+00004 | <meta charset="UTF-8">
+00005 | <meta name="viewport" content="width=device-width,initial-scale=1">
+00006 | <meta name="theme-color" content="#ffffff">
+00007 | <title>Cerybro | AI Organization</title>
+00008 | <style>
+00009 | *{box-sizing:border-box}
+00010 | body{margin:0;background:#fff;color:#171717;font-family:Arial,system-ui,sans-serif}
+00011 | button,input,select,textarea{font:inherit}
+00012 | button{cursor:pointer}
+00013 | .app{max-width:760px;margin:auto;min-height:100vh;padding-bottom:100px}
+00014 | header{height:90px;display:flex;align-items:center;justify-content:space-between;padding:15px 25px}
+00015 | .user{width:55px;height:55px;border-radius:50%;border:2px solid #eee;display:grid;place-items:center;color:#888;font-size:20px}
+00016 | .add{width:58px;height:58px;border:1px solid #eee;border-radius:50%;background:white;font-size:32px}
+00017 | .ceo{display:flex;align-items:center;flex-direction:column;padding:18px 0 25px}
+00018 | .avatar{width:70px;height:70px;display:grid;place-items:center;color:white;font-size:29px;font-weight:bold;flex-shrink:0}
+00019 | .ceo .avatar{width:112px;height:112px;border-radius:37px;font-size:42px;transform:rotate(-7deg);position:relative}
+00020 | .star{position:absolute;right:-8px;bottom:-5px;background:#f5a000;border:5px solid white;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;font-size:16px}
+00021 | .ceo strong{font-size:20px;font-weight:500;margin-top:15px}
+00022 | .ceo small{color:#999;margin-top:5px}
+00023 | .list{padding:0 17px}
+00024 | .item{display:flex;align-items:center;gap:15px;padding:13px 8px;min-height:96px;border-radius:14px}
+00025 | .item:active{background:#f7f8fa}
+00026 | .info{flex:1;min-width:0;cursor:pointer}
+00027 | .name{font-size:19px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+00028 | .preview{font-size:14px;color:#888;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+00029 | .actions{display:flex;gap:5px}
+00030 | .smallbtn{border:0;background:#f4f5f7;border-radius:9px;padding:8px;color:#555;font-size:12px}
+00031 | .bottom{position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px max(14px,calc((100% - 720px)/2));display:flex;gap:10px;align-items:center;border-top:1px solid #eee}
+00032 | .search{height:55px;border:1px solid #eee;border-radius:35px;display:flex;align-items:center;gap:10px;padding:0 18px;flex:1}
+00033 | .search input{border:0;outline:0;width:100%;font-size:17px}
+00034 | .qr{width:54px;height:54px;border:1px solid #eee;border-radius:50%;background:white;font-size:23px}
+00035 | .modal,.chat{display:none;position:fixed;inset:0;background:#0006;z-index:20;align-items:center;justify-content:center;padding:15px}
+00036 | .panel{background:white;width:100%;max-width:490px;max-height:90vh;overflow:auto;border-radius:22px;padding:22px}
+00037 | .panel h2{margin:0 0 17px;font-size:21px}
+00038 | .field{margin:13px 0}
+00039 | .field label{display:block;font-size:13px;color:#555;margin-bottom:7px}
+00040 | .field input,.field select,.field textarea{width:100%;border:1px solid #ddd;border-radius:10px;padding:12px;background:white}
+00041 | .colors,.symbols,.shapes{display:flex;gap:9px;flex-wrap:wrap}
+00042 | .color{width:32px;height:32px;border-radius:50%;border:3px solid white;outline:1px solid #ddd}
+00043 | .color.selected{outline:3px solid #222}
+00044 | .choice{border:1px solid #ddd;background:white;border-radius:9px;padding:9px 12px}
+00045 | .choice.selected{border:2px solid #1685ed;background:#eef5ff}
+00046 | .previewbox{display:flex;align-items:center;gap:14px;background:#f6f7f9;padding:13px;border-radius:13px;margin:15px 0}
+00047 | .previewbox .avatar{width:54px;height:54px;font-size:22px}
+00048 | .primary{background:#1685ed;color:white;border:0;border-radius:11px;padding:13px 18px;font-weight:600}
+00049 | .secondary{background:#f0f1f3;color:#333;border:0;border-radius:11px;padding:13px 18px}
+00050 | .row{display:flex;gap:9px;margin-top:18px}
+00051 | .row button{flex:1}
+00052 | .chat{background:white;display:none;flex-direction:column;justify-content:initial;padding:0}
+00053 | .chathead{height:75px;border-bottom:1px solid #eee;display:flex;align-items:center;padding:12px 18px;gap:13px}
+00054 | .chathead .avatar{width:45px;height:45px;font-size:18px}
+00055 | .chatbody{flex:1;background:#fafafa;padding:20px}
+00056 | .notice{background:white;border:1px solid #eee;padding:15px;border-radius:14px;color:#777;font-size:14px;text-align:center}
+00057 | .chatfoot{display:flex;gap:9px;padding:12px;border-top:1px solid #eee}
+00058 | .chatfoot input{flex:1;min-width:0;border:1px solid #eee;border-radius:25px;padding:13px}
+00059 | .chatfoot button{background:#1685ed;color:white;border:0;border-radius:25px;padding:0 18px}
+00060 | #toast{position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:#222;color:white;padding:12px 18px;border-radius:20px;display:none;z-index:40;font-size:13px}
+00061 | @media(max-width:500px){.item{gap:11px}.item .avatar{width:59px;height:59px}.name{font-size:17px}.preview{font-size:13px}.actions{flex-direction:column}.smallbtn{padding:6px}}
+00062 | </style>
+00063 | </head>
+00064 | <body>
+00065 | <div id="cerybro-login-overlay" style="position:fixed;inset:0;z-index:99999;background:#f8f8f7;display:flex;align-items:center;justify-content:center;padding:22px;font-family:Arial,sans-serif">
+00066 | <form id="cerybro-login-form" style="width:100%;max-width:390px;background:white;padding:28px;border:1px solid #ddd;border-radius:20px">
+00067 | <h2>Cerybro</h2><p>Yönetici girişi</p>
+00068 | <input id="cerybro-admin-password" type="password" autocomplete="current-password" placeholder="Yönetici şifresi" required style="box-sizing:border-box;width:100%;padding:15px;border:1px solid #ccc;border-radius:10px;font-size:16px">
+00069 | <button style="width:100%;margin-top:14px;padding:15px;background:#222;color:white;border:0;border-radius:10px">Giriş yap</button>
+00070 | <div id="cerybro-login-error" style="color:#b42318;margin-top:12px"></div>
+00071 | </form></div>
+00072 | <script>
+00073 | (()=>{
+00074 | const overlay=document.getElementById('cerybro-login-overlay');
+00075 | const form=document.getElementById('cerybro-login-form');
+00076 | const error=document.getElementById('cerybro-login-error');
+00077 | const key='cerybro_admin_token';
+00078 | const originalFetch=window.fetch.bind(window);
+00079 | window.fetch=async(resource,options={})=>{
+00080 |  const url=typeof resource==='string'?resource:(resource.url||'');
+00081 |  const protectedApi=url.startsWith('/api/') && url!='/api/login';
+00082 |  if(protectedApi){
+00083 |   const token=sessionStorage.getItem(key);
+00084 |   if(!token){overlay.style.display='flex';throw new Error('Yönetici girişi gerekli');}
+00085 |   const headers=new Headers(options.headers||{});
+00086 |   headers.set('Authorization','Bearer '+token);
+00087 |   options={...options,headers};
+00088 |  }
+00089 |  const response=await originalFetch(resource,options);
+00090 |  if(protectedApi && response.status===401){
+00091 |   sessionStorage.removeItem(key);overlay.style.display='flex';
+00092 |  }
+00093 |  return response;
+00094 | };
+00095 | form.addEventListener('submit',async e=>{
+00096 |  e.preventDefault();error.textContent='';
+00097 |  const button=form.querySelector('button');button.disabled=true;
+00098 |  try{
+00099 |   const response=await originalFetch('/api/login',{
+00100 |    method:'POST',headers:{'Content-Type':'application/json'},
+00101 |    body:JSON.stringify({password:document.getElementById('cerybro-admin-password').value})
+00102 |   });
+00103 |   const data=await response.json();
+00104 |   if(!response.ok)throw new Error(data.detail||'Giriş başarısız');
+00105 |   sessionStorage.setItem(key,data.access_token);location.reload();
+00106 |  }catch(err){error.textContent=err.message;}
+00107 |  finally{button.disabled=false;}
+00108 | });
+00109 | if(sessionStorage.getItem(key))overlay.style.display='none';
+00110 | })();
+00111 | 
+00112 | async function cmTestOllama(){
+00113 |   const el=document.getElementById("cm-status");
+00114 |   el.textContent="Qwen3 1.7B test ediliyor...";
+00115 |   try{
+00116 |     const r=await cmReq("/api/models/test",{
+00117 |       method:"POST",
+00118 |       body:JSON.stringify({
+00119 |         provider:"ollama",
+00120 |         model_name:"qwen3:1.7b",
+00121 |         prompt:"Türkçe olarak Cerybro'ya bağlı olduğunu doğrula."
+00122 |       })
+00123 |     });
+00124 |     el.textContent="BAŞARILI: "+(r.response||"Model cevap verdi.");
+00125 |   }catch(e){
+00126 |     el.textContent="TEST HATASI: "+e.message;
+00127 |   }
+00128 | }
+00129 | </script>
+00130 | 
+00131 | <div class="app">
+00132 | <header><div class="user">IK</div><button class="add" onclick="newAgent()">+</button></header>
+00133 | <div class="ceo" role="button" tabindex="0" style="cursor:pointer" onclick="openCEOChat()">
+00134 | <div class="avatar" style="background:#fa2345">••<div class="star">★</div></div>
+00135 | <strong>Cerybro · CEO</strong>
+00136 | <small>AI Organization · Yönetim merkezi</small>
+00137 | </div>
+00138 | <div class="list" id="list"><p style="text-align:center;color:#888">Ajanlar yükleniyor...</p></div>
+00139 | </div>
+00140 | 
+00141 | <div class="bottom">
+00142 | <button class="qr" onclick="newAgent()">＋</button>
+00143 | <div class="search"><span>⌕</span><input id="search" placeholder="Ajan ara..." oninput="filterAgents()"></div>
+00144 | </div>
+00145 | 
+00146 | <div class="modal" id="editor">
+00147 | <div class="panel">
+00148 | <h2 id="formTitle">Yeni ajan oluştur</h2>
+00149 | <input type="hidden" id="agentId">
+00150 | <div class="field"><label>Ajan adı</label><input id="name" placeholder="Örn. Nova"></div>
+00151 | <div class="field"><label>Görev / uzmanlık adı</label><input id="role" placeholder="Örn. Pazar Araştırma Uzmanı"></div>
+00152 | <div class="field"><label>Açıklama</label><textarea id="description" rows="2" placeholder="Bu ajan hangi işleri yapacak?"></textarea></div>
+00153 | <div class="field"><label>Avatar şekli</label><div class="shapes">
+00154 | <button class="choice selected" data-shape="rounded" onclick="pickShape('rounded')">Kare</button>
+00155 | <button class="choice" data-shape="circle" onclick="pickShape('circle')">Daire</button>
+00156 | <button class="choice" data-shape="hex" onclick="pickShape('hex')">Altıgen</button>
+00157 | <button class="choice" data-shape="diamond" onclick="pickShape('diamond')">Elmas</button>
+00158 | <button class="choice" data-shape="triangle" onclick="pickShape('triangle')">Üçgen</button>
+00159 | </div></div>
+00160 | <div class="field"><label>Avatar rengi</label><div class="colors" id="colors"></div></div>
+00161 | <div class="field"><label>Avatar sembolü</label><div class="symbols" id="symbols"></div></div>
+00162 | <div class="field"><label>Model sağlayıcısı</label><select id="provider"><option value="">Henüz atanmadı</option><option>Gemini</option><option>Claude</option><option>Grok</option><option>OpenAI</option><option>Yerel model</option></select></div>
+00163 | <div class="field"><label>Model adı (isteğe bağlı)</label><input id="model" placeholder="Model kimliği"></div>
+00164 | <div class="previewbox"><div class="avatar" id="previewAvatar">✦</div><div><strong id="previewName">Yeni Ajan</strong><div id="previewRole" style="font-size:13px;color:#777;margin-top:5px">Uzmanlık</div></div></div>
+00165 | <div class="row"><button class="secondary" onclick="closeEditor()">Vazgeç</button><button class="primary" onclick="saveAgent()">Kaydet</button></div>
+00166 | </div>
+00167 | </div>
+00168 | 
+00169 | <div class="chat" id="chat">
+00170 | <div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div><strong id="chatName"></strong><div style="font-size:12px;color:#888">Uzman ajan</div></div></div>
+00171 | <div class="chatbody"><div class="notice">Cerybro yapay zekâ bağlantısı aktif. Mesajlarını CEO sistemine gönderebilirsin.</div></div>
+00172 | <div class="chatfoot"><input id="message" placeholder="Mesaj yaz..."><button onclick="sendMessage()">Gönder</button></div>
+00173 | </div>
+00174 | <div id="toast"></div>
+00175 | 
+00176 | <script>
+00177 | const API='/api/agents';
+00178 | let agents=[],shape='rounded',color='#1685ed',symbol='✦',editing=false;
+00179 | const palette=['#1685ed','#f32649','#f39808','#08b5a5','#9255ed','#222222','#e56caa','#70a83b','#795548','#00a5a8'];
+00180 | const glyphs=['✦','●','◆','★','⚙','⌘','♟','◈','▲','⬢','☀','✿'];
+00181 | 
+00182 | function toast(t){let x=document.getElementById('toast');x.textContent=t;x.style.display='block';setTimeout(()=>x.style.display='none',2600)}
+00183 | function shapeStyle(s){return s==='circle'?'50%':s==='hex'?'22%':s==='diamond'?'8px':'18px'}
+00184 | function render(list=agents){
+00185 | document.getElementById('list').innerHTML=list.length?list.map(a=>`
+00186 | <div class="item">
+00187 | <div class="avatar" style="background:${a.color};border-radius:${shapeStyle(a.shape)};${a.shape==='diamond'?'transform:rotate(45deg)':''}" onclick="openChat(${a.id})">${a.symbol}</div>
+00188 | <div class="info" onclick="openChat(${a.id})"><div class="name">${esc(a.name)} · ${esc(a.role)}</div><div class="preview">${esc(a.description||'Uzman ajan')}</div></div>
+00189 | <div class="actions">
+00190 | <button class="smallbtn" onclick="editAgent(${a.id})">Düzenle</button>
+00191 | <button class="smallbtn" onclick="pauseAgent(${a.id})">Pasife al</button>
+00192 | </div>
+00193 | </div>`).join(''):'<p style="text-align:center;color:#888;padding:30px">Henüz ajan bulunmuyor.</p>';
+00194 | }
+00195 | function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+00196 | async function loadAgents(){
+00197 |     try{
+00198 |         const token=sessionStorage.getItem('cerybro_admin_token');
+00199 |         if(!token){
+00200 |             toast('Yönetici oturumu bulunamadı. Yeniden giriş yap.');
+00201 |             return;
+00202 |         }
+00203 |         const r=await fetch(API+'?include_paused=true',{
+00204 |             method:'GET',
+00205 |             headers:{'Authorization':'Bearer '+token,'Accept':'application/json'},
+00206 |             cache:'no-store'
+00207 |         });
+00208 |         if(r.status===401){
+00209 |             toast('Oturum süresi dolmuş. Yeniden giriş yap.');
+00210 |             return;
+00211 |         }
+00212 |         if(!r.ok) throw new Error('API HTTP '+r.status);
+00213 |         const data=await r.json();
+00214 |         if(!Array.isArray(data)) throw new Error('Ajan API yanıtı beklenen formatta değil.');
+00215 |         agents=data;
+00216 |         render();
+00217 |     }catch(e){
+00218 |         console.error('Cerybro ajan yükleme hatası:',e);
+00219 |         toast('Ajanlar yüklenemedi: '+e.message);
+00220 |     }
+00221 | }
+00222 | function filterAgents(){let q=document.getElementById('search').value.toLowerCase();render(agents.filter(a=>(a.name+' '+a.role+' '+a.description).toLowerCase().includes(q)))}
+00223 | function setupChoices(){
+00224 | document.getElementById('colors').innerHTML=palette.map(c=>`<button class="color" style="background:${c}" onclick="pickColor('${c}')" data-color="${c}"></button>`).join('');
+00225 | document.getElementById('symbols').innerHTML=glyphs.map(s=>`<button class="choice" onclick="pickSymbol('${s}')" data-symbol="${s}">${s}</button>`).join('');
+00226 | }
+00227 | function pickShape(s){shape=s;document.querySelectorAll('[data-shape]').forEach(b=>b.classList.toggle('selected',b.dataset.shape===s));preview()}
+00228 | function pickColor(c){color=c;document.querySelectorAll('[data-color]').forEach(b=>b.classList.toggle('selected',b.dataset.color===c));preview()}
+00229 | function pickSymbol(s){symbol=s;document.querySelectorAll('[data-symbol]').forEach(b=>b.classList.toggle('selected',b.dataset.symbol===s));preview()}
+00230 | function preview(){
+00231 | let a=document.getElementById('previewAvatar');a.style.background=color;a.style.borderRadius=shapeStyle(shape);a.textContent=symbol;
+00232 | a.style.transform=shape==='diamond'?'rotate(45deg)':'none';
+00233 | document.getElementById('previewName').textContent=document.getElementById('name').value||'Yeni Ajan';
+00234 | document.getElementById('previewRole').textContent=document.getElementById('role').value||'Uzmanlık';
+00235 | }
+00236 | function newAgent(){
+00237 | editing=false;document.getElementById('formTitle').textContent='Yeni ajan oluştur';
+00238 | document.getElementById('agentId').value='';
+00239 | ['name','role','description','model'].forEach(x=>document.getElementById(x).value='');
+00240 | document.getElementById('provider').value='';
+00241 | shape='rounded';color='#1685ed';symbol='✦';pickShape(shape);pickColor(color);pickSymbol(symbol);
+00242 | document.getElementById('editor').style.display='flex';preview();
+00243 | }
+00244 | function editAgent(id){
+00245 | let a=agents.find(x=>x.id===id);if(!a)return;editing=true;
+00246 | document.getElementById('formTitle').textContent='Ajanı düzenle';
+00247 | document.getElementById('agentId').value=id;
+00248 | document.getElementById('name').value=a.name;
+00249 | document.getElementById('role').value=a.role;
+00250 | document.getElementById('description').value=a.description||'';
+00251 | document.getElementById('model').value=a.model_name||'';
+00252 | document.getElementById('provider').value=a.model_provider||'';
+00253 | shape=a.shape;color=a.color;symbol=a.symbol;
+00254 | pickShape(shape);pickColor(color);pickSymbol(symbol);
+00255 | document.getElementById('editor').style.display='flex';preview();
+00256 | }
+00257 | async function saveAgent(){
+00258 | let data={name:document.getElementById('name').value.trim(),role:document.getElementById('role').value.trim(),description:document.getElementById('description').value,color,shape,symbol,model_provider:document.getElementById('provider').value||null,model_name:document.getElementById('model').value||null};
+00259 | if(!data.name||!data.role){toast('Ajan adı ve görev adı gerekli.');return}
+00260 | try{
+00261 | let id=document.getElementById('agentId').value;
+00262 | let r=await fetch(id?API+'/'+id:API,{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+00263 | let result=await r.json();if(!r.ok)throw Error(result.detail||'Kayıt başarısız');
+00264 | closeEditor();await loadAgents();toast(id?'Ajan güncellendi':'Yeni ajan kaydedildi');
+00265 | }catch(e){toast(e.message)}
+00266 | }
+00267 | async function pauseAgent(id){
+00268 | if(!confirm('Bu ajanı pasife almak istiyor musun?'))return;
+00269 | try{let r=await fetch(API+'/'+id,{method:'DELETE'});if(!r.ok)throw Error();await loadAgents();toast('Ajan pasife alındı')}catch(e){toast('İşlem başarısız')}
+00270 | }
+00271 | function closeEditor(){document.getElementById('editor').style.display='none'}
+00272 | function openCEOChat(){
+00273 |   document.getElementById('chatName').textContent='Cerybro · CEO';
+00274 |   const av=document.getElementById('chatAvatar');
+00275 |   av.textContent='✦';
+00276 |   av.style.background='#fa2345';
+00277 |   av.style.borderRadius='50%';
+00278 |   document.getElementById('chat').style.display='flex';
+00279 | }
+00280 | function openChat(id){
+00281 | let a=agents.find(x=>x.id===id);if(!a)return;
+00282 | document.getElementById('chatName').textContent=a.name+' · '+a.role;
+00283 | let av=document.getElementById('chatAvatar');av.textContent=a.symbol;av.style.background=a.color;av.style.borderRadius=shapeStyle(a.shape);
+00284 | document.getElementById('chat').style.display='flex';
+00285 | }
+00286 | function closeChat(){document.getElementById('chat').style.display='none'}
+00287 | 
+00288 | async function sendMessage(){
+00289 |     const input=document.getElementById('message');
+00290 |     const message=input.value.trim();
+00291 |     if(!message)return;
+00292 | 
+00293 |     const body=document.querySelector('.chatbody');
+00294 |     const conversationId='cerybro-ceo';
+00295 |     const token=sessionStorage.getItem('cerybro_admin_token');
+00296 | 
+00297 |     if(!token){
+00298 |         toast('Oturum bulunamadı. Yeniden giriş yapmalısın.');
+00299 |         return;
+00300 |     }
+00301 | 
+00302 |     const addMessage=(role,text)=>{
+00303 |         const el=document.createElement('div');
+00304 |         el.style.cssText='padding:12px;margin:8px 0;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;'+
+00305 |             (role==='user'?'background:#e9f0ff;margin-left:12%;':'background:#f1f1f1;margin-right:8%;');
+00306 |         el.textContent=text;
+00307 |         body.appendChild(el);
+00308 |         body.scrollTop=body.scrollHeight;
+00309 |     };
+00310 | 
+00311 |     input.value='';
+00312 |     addMessage('user',message);
+00313 |     const button=document.querySelector('.chatfoot button');
+00314 |     if(button)button.disabled=true;
+00315 | 
+00316 |     try{
+00317 |         const response=await fetch('/api/chat',{
+00318 |             method:'POST',
+00319 |             headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+00320 |             body:JSON.stringify({
+00321 |                 message,
+00322 |                 conversation_id:conversationId,
+00323 |                 agent_name:document.getElementById('chatName').textContent || 'Cerybro'
+00324 |             })
+00325 |         });
+00326 |         const data=await response.json();
+00327 |         if(!response.ok)throw new Error(data.detail||'Mesaj gönderilemedi');
+00328 |         addMessage('assistant',data.response);
+00329 |     }catch(e){
+00330 |         addMessage('assistant','Bağlantı hatası: '+e.message);
+00331 |     }finally{
+00332 |         if(button)button.disabled=false;
+00333 |         input.focus();
+00334 |     }
+00335 | }
+00336 | 
+00337 | 
+00338 | async function cmReq(url,opts={}){
+00339 |  const t=cmToken();
+00340 |  if(!t)throw Error("Yönetici oturumu bulunamadı. Yeniden giriş yap.");
+00341 |  const r=await fetch(url,{
+00342 |   ...opts,
+00343 |   headers:{
+00344 |    Authorization:"Bearer "+t,
+00345 |    "Content-Type":"application/json",
+00346 |    ...(opts.headers||{})
+00347 |   }
+00348 |  });
+00349 |  const d=await r.json().catch(()=>({}));
+00350 |  if(!r.ok)throw Error(d.detail||("HTTP "+r.status));
+00351 |  return d;
+00352 | }
+00353 | 
+00354 | function cmOpen(){
+00355 |  document.getElementById("cm-panel").style.display="flex";
+00356 |  cmRefresh();
+00357 | }
+00358 | function cmClose(){
+00359 |  document.getElementById("cm-panel").style.display="none";
+00360 | }
+00361 | 
+00362 | async function cmRefresh(){
+00363 |  const el=document.getElementById("cm-status");
+00364 |  el.textContent="Kontrol ediliyor...";
+00365 |  try{
+00366 |   const d=await cmReq("/api/models/providers");
+00367 |   el.textContent=
+00368 |    "Desteklenen sağlayıcılar:\n"+d.supported.join(", ")+
+00369 |    "\n\nKAYITLI ANAHTARLAR:\n"+
+00370 |    (Object.keys(d.configured).length?
+00371 |     Object.keys(d.configured).join("\n"):
+00372 |     "Henüz API anahtarı kaydedilmedi.");
+00373 |  }catch(e){
+00374 |   el.textContent=e.message;
+00375 |  }
+00376 | }
+00377 | 
+00378 | function cmProviderChanged(){
+00379 |   const local=document.getElementById("cm-provider").value==="ollama";
+00380 |   const key=document.getElementById("cm-key");
+00381 |   key.disabled=local;
+00382 |   key.placeholder=local?"Ollama için anahtar gerekmez":"API anahtarını buraya gir";
+00383 | }
+00384 | async function cmSave(){
+00385 |  const provider=document.getElementById("cm-provider").value;
+00386 |  const key=document.getElementById("cm-key").value.trim();
+00387 |  const el=document.getElementById("cm-status");
+00388 | 
+00389 |  if(provider==="ollama"){
+00390 |     el.textContent="Ollama kaydediliyor...";
+00391 |     try{
+00392 |       await cmReq("/api/models/keys/ollama",{method:"PUT",body:JSON.stringify({api_key:"local-ollama-no-key"})});
+00393 |       el.textContent="Ollama yerel sağlayıcısı kaydedildi.";
+00394 |       await cmRefresh();
+00395 |     }catch(e){el.textContent=e.message;}
+00396 |     return;
+00397 |   }
+00398 |   if(key.length<8){
+00399 |   el.textContent="Geçerli bir API anahtarı gir.";
+00400 |   return;
+00401 |  }
+00402 | 
+00403 |  el.textContent="Güvenli kaydediliyor...";
+00404 |  try{
+00405 |   await cmReq("/api/models/keys/"+provider,{
+00406 |    method:"PUT",
+00407 |    body:JSON.stringify({api_key:key})
+00408 |   });
+00409 |   document.getElementById("cm-key").value="";
+00410 |   el.textContent="Anahtar şifrelenerek kaydedildi.";
+00411 |   await cmRefresh();
+00412 |  }catch(e){
+00413 |   el.textContent=e.message;
+00414 |  }
+00415 | }
+00416 | 
+00417 | window.addEventListener('load',()=>{loadAgents();});
+00418 | </script>
+00419 | 
+00420 | </body>
+00421 | </html>

@@ -606,8 +606,8 @@ async def _agent_footprint(agent_id):
             bfiles += [os.path.join(root, f) for f in files]
     return {
         "agent": row, "conv": conv, "redis_keys": keys, "backup_dir": bdir, "backup_files": bfiles,
-        "messages": await db_pool.fetchval("SELECT count(*) FROM cerybro_chat_messages WHERE conversation_id=$1", conv),
-        "attachments": await db_pool.fetch("SELECT id, ext, filename, size_bytes FROM cerybro_attachments WHERE conversation_id=$1", conv),
+        "messages": await db_pool.fetchval("SELECT count(*) FROM cerybro_chat_messages WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%')", conv),
+        "attachments": await db_pool.fetch("SELECT id, ext, filename, size_bytes FROM cerybro_attachments WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%')", conv),
         "tasks": await db_pool.fetchval("SELECT count(*) FROM cerybro_tasks WHERE assigned_agent_id=$1", agent_id),
     }
 
@@ -655,8 +655,8 @@ async def purge_agent(agent_id: int, data: AgentPurgeInput, request: Request):
     # 1) Yedek: bu ajana ait her şey tek dosyaya
     def rec(r):
         return {k: (v.isoformat() if hasattr(v, "isoformat") else str(v) if not isinstance(v, (int, float, bool, type(None), list, dict)) else v) for k, v in dict(r).items()}
-    msgs = await db_pool.fetch("SELECT * FROM cerybro_chat_messages WHERE conversation_id=$1 ORDER BY id", f["conv"])
-    atts = await db_pool.fetch("SELECT * FROM cerybro_attachments WHERE conversation_id=$1", f["conv"])
+    msgs = await db_pool.fetch("SELECT * FROM cerybro_chat_messages WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%') ORDER BY id", f["conv"])
+    atts = await db_pool.fetch("SELECT * FROM cerybro_attachments WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%')", f["conv"])
     mem = {}
     for k in f["redis_keys"]:
         try:
@@ -674,6 +674,11 @@ async def purge_agent(agent_id: int, data: AgentPurgeInput, request: Request):
         files_to_archive += [os.path.join(UPLOAD_DIR, "%s.%s" % (r["id"], r["ext"])) for r in atts]
     if "backups" in cats:
         files_to_archive += f["backup_files"]
+    if "chat" in cats:
+        cdir = os.path.join(AGENT_DATA_DIR, f["conv"])
+        if os.path.isdir(cdir):
+            for root, _, fs in os.walk(cdir):
+                files_to_archive += [os.path.join(root, x) for x in fs]
     files_to_archive = [p for p in files_to_archive if os.path.isfile(p)]
     if files_to_archive:
         import tarfile
@@ -687,13 +692,17 @@ async def purge_agent(agent_id: int, data: AgentPurgeInput, request: Request):
         async with conn.transaction():
             if "uploads" in cats:
                 result["attachments"] = int((await conn.execute(
-                    "DELETE FROM cerybro_attachments WHERE conversation_id=$1", f["conv"])).split()[-1])
+                    "DELETE FROM cerybro_attachments WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%')", f["conv"])).split()[-1])
             if "chat" in cats:
                 if "uploads" not in cats:
                     await conn.execute("""UPDATE cerybro_attachments SET message_id=NULL
-                        WHERE message_id IN (SELECT id FROM cerybro_chat_messages WHERE conversation_id=$1)""", f["conv"])
+                        WHERE message_id IN (SELECT id FROM cerybro_chat_messages WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%'))""", f["conv"])
                 result["messages"] = int((await conn.execute(
-                    "DELETE FROM cerybro_chat_messages WHERE conversation_id=$1", f["conv"])).split()[-1])
+                    "DELETE FROM cerybro_chat_messages WHERE (conversation_id=$1 OR conversation_id LIKE $1 || '~%')", f["conv"])).split()[-1])
+            if "chat" in cats:
+                await _ensure_sessions()
+                result["sessions"] = int((await conn.execute(
+                    "DELETE FROM cerybro_chat_sessions WHERE agent_key=$1", f["conv"])).split()[-1])
             if data.delete_agent:
                 result["tasks_unassigned"] = int((await conn.execute(
                     "UPDATE cerybro_tasks SET assigned_agent_id=NULL WHERE assigned_agent_id=$1", agent_id)).split()[-1])
@@ -722,6 +731,8 @@ async def purge_agent(agent_id: int, data: AgentPurgeInput, request: Request):
                 os.remove(p)
                 n += 1
         result["upload_files"] = n
+    if "chat" in cats:
+        shutil.rmtree(os.path.join(AGENT_DATA_DIR, f["conv"]), ignore_errors=True)
     if "backups" in cats and os.path.isdir(f["backup_dir"]):
         shutil.rmtree(f["backup_dir"], ignore_errors=True)
         result["backup_files"] = len(f["backup_files"])
@@ -1252,6 +1263,338 @@ async def passkey_login_verify(data: PasskeyFinish, request: Request):
     return {"access_token": _new_token(), "token_type": "bearer", "expires_in": TOKEN_TTL}
 
 
+# ------------------------------------------------------------ SOHBET OTURUMLARI
+AGENT_DATA_DIR = os.getenv("CERYBRO_AGENT_DATA_DIR", "/data/agents")
+CEO_KEY = "cerybro-ceo"
+_sessions_ready = False
+
+
+async def _ensure_sessions():
+    global _sessions_ready
+    if _sessions_ready:
+        return
+    await db_pool.execute("""CREATE TABLE IF NOT EXISTS cerybro_chat_sessions (
+        id VARCHAR(100) PRIMARY KEY, agent_key VARCHAR(60) NOT NULL, title TEXT NOT NULL DEFAULT '',
+        seed_summary TEXT NOT NULL DEFAULT '', work_log JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())""")
+    await db_pool.execute("CREATE INDEX IF NOT EXISTS idx_cerybro_sess_agent ON cerybro_chat_sessions(agent_key, updated_at DESC)")
+    # Eski (oturumsuz) sohbetler birer oturum olarak görünür
+    await db_pool.execute("""INSERT INTO cerybro_chat_sessions (id, agent_key, title, created_at, updated_at)
+        SELECT conversation_id, conversation_id, 'Önceki sohbet', min(created_at), max(created_at)
+        FROM cerybro_chat_messages WHERE conversation_id NOT LIKE '%~%'
+          AND (conversation_id='cerybro-ceo' OR conversation_id ~ '^agent-[0-9]+$')
+        GROUP BY conversation_id ON CONFLICT (id) DO NOTHING""")
+    _sessions_ready = True
+
+
+def _agent_key_of(conv):
+    return (conv or CEO_KEY).split("~", 1)[0]
+
+
+async def _check_agent_key(key):
+    if key == CEO_KEY:
+        return None
+    mm = re.match(r"^agent-(\d+)$", key or "")
+    if not mm:
+        raise HTTPException(400, "Geçersiz ajan")
+    row = await db_pool.fetchrow("SELECT * FROM agents WHERE id=$1", int(mm.group(1)))
+    if not row:
+        raise HTTPException(404, "Ajan bulunamadı")
+    return row
+
+
+async def _session_row(sid):
+    await _ensure_sessions()
+    r = await db_pool.fetchrow("SELECT * FROM cerybro_chat_sessions WHERE id=$1", sid)
+    if not r:
+        key = _agent_key_of(sid)
+        if sid != key:
+            raise HTTPException(404, "Oturum bulunamadı")
+        await _check_agent_key(key)
+        await db_pool.execute("INSERT INTO cerybro_chat_sessions (id, agent_key) VALUES ($1,$1) ON CONFLICT DO NOTHING", sid)
+        r = await db_pool.fetchrow("SELECT * FROM cerybro_chat_sessions WHERE id=$1", sid)
+    return r
+
+
+async def _write_session_file(sid):
+    """Oturumu ajanın kendi klasörüne JSON dosyası olarak yazar."""
+    r = await db_pool.fetchrow("SELECT * FROM cerybro_chat_sessions WHERE id=$1", sid)
+    if not r:
+        return
+    msgs = await db_pool.fetch("SELECT role, content, created_at FROM cerybro_chat_messages WHERE conversation_id=$1 ORDER BY id", sid)
+    d = os.path.join(AGENT_DATA_DIR, r["agent_key"], "chats")
+    doc = {"session": sid, "agent": r["agent_key"], "title": r["title"], "seed_summary": r["seed_summary"],
+           "work_log": r["work_log"], "created_at": r["created_at"].isoformat(), "updated_at": r["updated_at"].isoformat(),
+           "messages": [{"role": x["role"], "content": x["content"], "at": x["created_at"].isoformat()} for x in msgs]}
+
+    def _w():
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, sid.replace("~", "_").replace("/", "_") + ".json")
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, p)
+    await asyncio.to_thread(_w)
+
+
+async def _model_for(agent_row):
+    if agent_row is not None and agent_row["model_provider"]:
+        return agent_row["model_provider"], agent_row["model_name"] or None
+    return await _ceo_choice()
+
+
+def _json_from_text(t):
+    t = (t or "").strip()
+    s, e = t.find("{"), t.rfind("}")
+    try:
+        return json.loads(t[s:e + 1]) if s >= 0 else {}
+    except Exception:
+        return {}
+
+
+async def _update_work_log(sid):
+    try:
+        r = await db_pool.fetchrow("SELECT agent_key FROM cerybro_chat_sessions WHERE id=$1", sid)
+        agent = await _check_agent_key(r["agent_key"])
+        rows = await db_pool.fetch("""SELECT role, content FROM (SELECT id, role, content FROM cerybro_chat_messages
+            WHERE conversation_id=$1 ORDER BY id DESC LIMIT 30) x ORDER BY id""", sid)
+        text = "\n".join(("Kullanıcı: " if x["role"] == "user" else "Ajan: ") + x["content"][:1500] for x in rows)
+        prov, model = await _model_for(agent)
+        ans, _, _ = await _cerybro_completion([
+            {"role": "system", "content": "Sohbetten iş kaydı çıkar. Yalnızca JSON döndür: "
+             '{"baslik":"kısa başlık","konusulan":["..."],"yapilan":["..."],"biten":["..."]}. '
+             "Yapılmamış işi yapılmış gösterme. Türkçe, kısa maddeler."},
+            {"role": "user", "content": text}], provider=prov, model_name=model, max_tokens=600)
+        j = _json_from_text(ans)
+        log = {k: [str(v)[:300] for v in (j.get(k) or [])][:20] for k in ("konusulan", "yapilan", "biten")}
+        title = str(j.get("baslik") or "")[:80]
+        await db_pool.execute("""UPDATE cerybro_chat_sessions SET work_log=$2,
+            title=CASE WHEN title IN ('', 'Yeni sohbet') AND $3<>'' THEN $3 ELSE title END WHERE id=$1""", sid, log, title)
+    except Exception:
+        pass
+    try:
+        await _write_session_file(sid)
+    except Exception:
+        pass
+
+
+@app.get("/api/chat/sessions")
+async def list_sessions(agent_key: str = CEO_KEY):
+    await _ensure_sessions()
+    await _check_agent_key(agent_key)
+    rows = await db_pool.fetch("""SELECT s.id, s.title, s.created_at, s.updated_at, s.work_log, (s.seed_summary<>'') AS seeded,
+        (SELECT count(*) FROM cerybro_chat_messages m WHERE m.conversation_id=s.id) AS messages
+        FROM cerybro_chat_sessions s WHERE s.agent_key=$1 ORDER BY s.updated_at DESC LIMIT 100""", agent_key)
+    return {"sessions": [{**dict(r), "created_at": r["created_at"].isoformat(), "updated_at": r["updated_at"].isoformat()} for r in rows]}
+
+
+class NewSessionInput(BaseModel):
+    agent_key: str = CEO_KEY
+
+
+@app.post("/api/chat/sessions")
+async def new_session(data: NewSessionInput):
+    await _ensure_sessions()
+    await _check_agent_key(data.agent_key)
+    prev = await db_pool.fetchval("""SELECT s.id FROM cerybro_chat_sessions s WHERE s.agent_key=$1
+        AND EXISTS (SELECT 1 FROM cerybro_chat_messages m WHERE m.conversation_id=s.id) ORDER BY s.updated_at DESC LIMIT 1""", data.agent_key)
+    sid = data.agent_key + "~" + _dt_stamp() + "-" + _secrets.token_hex(3)
+    await db_pool.execute("INSERT INTO cerybro_chat_sessions (id, agent_key, title) VALUES ($1,$2,'Yeni sohbet')", sid, data.agent_key)
+    await _write_session_file(sid)
+    return {"id": sid, "previous_session": prev}
+
+
+def _dt_stamp():
+    import datetime as _d
+    return _d.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+class SeedInput(BaseModel):
+    from_session: Optional[str] = None
+
+
+@app.post("/api/chat/sessions/{sid}/seed")
+async def seed_session(sid: str, data: SeedInput):
+    """Evet: önceki oturumun özetini LLM ile çıkarıp yeni oturumun bağlamına ekler."""
+    s = await _session_row(sid)
+    src = data.from_session or await db_pool.fetchval("""SELECT x.id FROM cerybro_chat_sessions x WHERE x.agent_key=$1 AND x.id<>$2
+        AND EXISTS (SELECT 1 FROM cerybro_chat_messages m WHERE m.conversation_id=x.id) ORDER BY x.updated_at DESC LIMIT 1""", s["agent_key"], sid)
+    if not src or _agent_key_of(src) != s["agent_key"]:
+        raise HTTPException(404, "Özetlenecek önceki sohbet yok")
+    agent = await _check_agent_key(s["agent_key"])
+    prev = await db_pool.fetchrow("SELECT seed_summary, work_log FROM cerybro_chat_sessions WHERE id=$1", src)
+    rows = await db_pool.fetch("""SELECT role, content FROM (SELECT id, role, content FROM cerybro_chat_messages
+        WHERE conversation_id=$1 ORDER BY id DESC LIMIT 60) x ORDER BY id""", src)
+    text = ("Önceki özet: " + prev["seed_summary"] + "\n\n" if prev and prev["seed_summary"] else "") + \
+        "\n".join(("Kullanıcı: " if x["role"] == "user" else "Ajan: ") + x["content"][:2000] for x in rows)
+    prov, model = await _model_for(agent)
+    try:
+        summary, _, _ = await _cerybro_completion([
+            {"role": "system", "content": "Aşağıdaki sohbetin devam edilebilir bir özetini Türkçe yaz: hedefler, alınan kararlar, "
+             "yapılan işler, biten işler, açık kalan işler ve sıradaki adım. En fazla 250 kelime. Uydurma bilgi ekleme."},
+            {"role": "user", "content": text}], provider=prov, model_name=model, max_tokens=900)
+    except Exception as exc:
+        raise HTTPException(502, "Özet oluşturulamadı: " + str(exc)[:200])
+    await db_pool.execute("UPDATE cerybro_chat_sessions SET seed_summary=$2, updated_at=NOW() WHERE id=$1", sid, summary[:8000])
+    await _write_session_file(sid)
+    return {"id": sid, "from_session": src, "summary": summary}
+
+
+@app.delete("/api/chat/sessions/{sid}/seed")
+async def unseed_session(sid: str):
+    await _session_row(sid)
+    await db_pool.execute("UPDATE cerybro_chat_sessions SET seed_summary='' WHERE id=$1", sid)
+    return {"ok": True}
+
+
+# ------------------------------------------------- CERYBRO SİLME (PARMAK İZİ)
+CEO_PURGE_CATEGORIES = {
+    "memory": "Hafıza / önbellek",
+    "settings": "CEO model ayarları",
+    "chat": "Sohbet geçmişi ve oturum dosyaları",
+    "uploads": "Yüklenen dosyalar",
+}
+CEO_DEL_TTL = 60  # saniye: onay en fazla 60 sn geçerli, tek kullanımlık
+
+
+async def _ceo_footprint():
+    await _ensure_attachments()
+    await _ensure_sessions()
+    keys = [k async for k in redis_client.scan_iter(match="cerybro:ceo:*", count=200)]
+    like = CEO_KEY + "~%"
+    return {
+        "redis_keys": keys,
+        "messages": await db_pool.fetchval("SELECT count(*) FROM cerybro_chat_messages WHERE conversation_id=$1 OR conversation_id LIKE $2", CEO_KEY, like),
+        "sessions": await db_pool.fetchval("SELECT count(*) FROM cerybro_chat_sessions WHERE agent_key=$1", CEO_KEY),
+        "attachments": await db_pool.fetch("SELECT id, ext FROM cerybro_attachments WHERE conversation_id=$1 OR conversation_id LIKE $2", CEO_KEY, like),
+        "settings": await db_pool.fetchval("SELECT count(*) FROM cerybro_ceo_settings"),
+    }
+
+
+@app.get("/api/ceo/data")
+async def ceo_data_summary():
+    f = await _ceo_footprint()
+    counts = {"memory": len(f["redis_keys"]), "settings": f["settings"], "chat": f["messages"], "uploads": len(f["attachments"])}
+    return {"agent": {"id": "ceo", "name": "Cerybro"}, "requires_passkey": True,
+            "categories": {k: {"label": v, "count": counts[k]} for k, v in CEO_PURGE_CATEGORIES.items()},
+            "kept": {"tasks_unassigned": 0}}
+
+
+@app.post("/api/ceo/delete/options")
+async def ceo_delete_options():
+    await _ensure_passkey_table()
+    rows = await db_pool.fetch("SELECT credential_id FROM cerybro_passkeys WHERE owner_email=$1", ADMIN_EMAIL)
+    if not rows:
+        raise HTTPException(403, "Cerybro'yu silmek için önce profilden parmak izi kaydetmelisin")
+    opts = generate_authentication_options(
+        rp_id=WEBAUTHN_RP_ID,
+        allow_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["credential_id"])) for r in rows],
+        user_verification=UserVerificationRequirement.REQUIRED, timeout=CEO_DEL_TTL * 1000,
+    )
+    cid = _secrets.token_urlsafe(18)
+    # Bu işleme özel challenge: ayrı anahtar alanı, 60 sn ömür, GETDEL ile tek kullanım
+    await redis_client.set("cerybro:wa:ceodel:" + cid, bytes_to_base64url(opts.challenge), ex=CEO_DEL_TTL)
+    return {"challenge_id": cid, "options": json.loads(options_to_json(opts)), "ttl": CEO_DEL_TTL}
+
+
+class CeoDeleteInput(BaseModel):
+    challenge_id: str = Field(min_length=8, max_length=64)
+    credential: dict
+    categories: List[str] = Field(default_factory=list)
+    delete_all: bool = False
+    confirm_name: str
+
+
+async def _ceo_full_backup(stamp):
+    """Silmeden önce tam yedek: tüm tablolar (JSON) + yüklemeler + ajan oturum dosyaları."""
+    import gzip, tarfile
+    os.makedirs(DELETED_AGENTS_DIR, exist_ok=True)
+    base = os.path.join(DELETED_AGENTS_DIR, "cerybro-full-" + stamp)
+    tables = [r["tablename"] for r in await db_pool.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1")]
+    dump = {}
+    for t in tables:
+        rows = await db_pool.fetch('SELECT * FROM "%s"' % t.replace('"', ''))
+        dump[t] = [{k: (v.isoformat() if hasattr(v, "isoformat") else v if isinstance(v, (int, float, bool, type(None), list, dict, str)) else str(v))
+                    for k, v in dict(r).items()} for r in rows]
+    with gzip.open(base + ".json.gz", "wt", encoding="utf-8") as g:
+        json.dump({"kind": "cerybro-full-backup", "stamp": stamp, "tables": dump}, g, ensure_ascii=False, default=str)
+
+    def _tar():
+        with tarfile.open(base + "-files.tar.gz", "w:gz") as t:
+            for d in (UPLOAD_DIR, AGENT_DATA_DIR):
+                if os.path.isdir(d):
+                    t.add(d, arcname=os.path.relpath(d, "/data"))
+    await asyncio.to_thread(_tar)
+    return base
+
+
+async def _verify_ceo_delete_assertion(data: CeoDeleteInput):
+    key = "cerybro:wa:ceodel:" + data.challenge_id
+    val = await redis_client.getdel(key)  # tek kullanım
+    if not val:
+        raise HTTPException(403, "Parmak izi onayı yok, süresi dolmuş (60 sn) veya zaten kullanılmış")
+    if isinstance(val, bytes):
+        val = val.decode()
+    cred_id = str(data.credential.get("id") or data.credential.get("rawId") or "")
+    row = await db_pool.fetchrow("SELECT id, public_key, sign_count FROM cerybro_passkeys WHERE credential_id=$1 AND owner_email=$2",
+                                 cred_id, ADMIN_EMAIL)
+    if not row:
+        raise HTTPException(403, "Bu parmak izi kayıtlı değil")
+    try:
+        v = verify_authentication_response(
+            credential=data.credential, expected_challenge=base64url_to_bytes(val),
+            expected_rp_id=WEBAUTHN_RP_ID, expected_origin=WEBAUTHN_ORIGIN,
+            credential_public_key=base64url_to_bytes(row["public_key"]),
+            credential_current_sign_count=int(row["sign_count"]), require_user_verification=True)
+    except Exception:
+        raise HTTPException(403, "Parmak izi doğrulanamadı")
+    await db_pool.execute("UPDATE cerybro_passkeys SET sign_count=$1, last_used_at=NOW() WHERE id=$2", int(v.new_sign_count), row["id"])
+
+
+@app.post("/api/ceo/delete")
+async def ceo_delete(data: CeoDeleteInput):
+    import shutil
+    cats = set(CEO_PURGE_CATEGORIES) if data.delete_all else set(data.categories)
+    if not cats or not cats <= set(CEO_PURGE_CATEGORIES):
+        raise HTTPException(400, "Geçersiz veya boş kategori")
+    if data.confirm_name.strip().lower() != "cerybro":
+        raise HTTPException(400, "Onay için 'Cerybro' yazmalısın")
+    await _verify_ceo_delete_assertion(data)  # yalnızca geçerli parmak izi onayı ile devam
+    await _ensure_audit()
+    stamp = _dt_stamp()
+    base = await _ceo_full_backup(stamp)
+    f = await _ceo_footprint()
+    like = CEO_KEY + "~%"
+    result = {}
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            if "uploads" in cats:
+                result["attachments"] = int((await conn.execute(
+                    "DELETE FROM cerybro_attachments WHERE conversation_id=$1 OR conversation_id LIKE $2", CEO_KEY, like)).split()[-1])
+            if "chat" in cats:
+                await conn.execute("""UPDATE cerybro_attachments SET message_id=NULL WHERE message_id IN
+                    (SELECT id FROM cerybro_chat_messages WHERE conversation_id=$1 OR conversation_id LIKE $2)""", CEO_KEY, like)
+                result["messages"] = int((await conn.execute(
+                    "DELETE FROM cerybro_chat_messages WHERE conversation_id=$1 OR conversation_id LIKE $2", CEO_KEY, like)).split()[-1])
+                result["sessions"] = int((await conn.execute(
+                    "DELETE FROM cerybro_chat_sessions WHERE agent_key=$1", CEO_KEY)).split()[-1])
+            if "settings" in cats:
+                result["settings"] = int((await conn.execute("DELETE FROM cerybro_ceo_settings")).split()[-1])
+            await conn.execute("INSERT INTO cerybro_audit_log (action, target, details, actor) VALUES ($1,$2,$3::jsonb,$4)",
+                               "ceo_purge", "cerybro", {"categories": sorted(cats), "delete_all": data.delete_all,
+                                                        "result": result, "backup": os.path.basename(base), "passkey": True}, ADMIN_EMAIL)
+    if "memory" in cats and f["redis_keys"]:
+        result["memory_keys"] = await redis_client.delete(*f["redis_keys"])
+    if "uploads" in cats:
+        for r in f["attachments"]:
+            p = os.path.join(UPLOAD_DIR, "%s.%s" % (r["id"], r["ext"]))
+            if os.path.isfile(p):
+                os.remove(p)
+    if "chat" in cats:
+        shutil.rmtree(os.path.join(AGENT_DATA_DIR, CEO_KEY), ignore_errors=True)
+    return {"ok": True, "deleted": result, "backup": os.path.basename(base) + ".json.gz", "backup_kept_days": 7}
+
+
 # --------------------------------------------------------------- CEO SOHBETİ
 class ChatInput(BaseModel):
     message: str = ""
@@ -1442,7 +1785,6 @@ async def cerybro_chat(data: ChatInput):
     stored_message = "\n".join(([message] if message else []) + att_notes)
 
     try:
-        provider, model_name = await _ceo_choice()
         rows = await db_pool.fetch("""
             SELECT role, content FROM (
                 SELECT id, role, content FROM cerybro_chat_messages
@@ -1456,9 +1798,11 @@ async def cerybro_chat(data: ChatInput):
         else:
             history.append({"role": "user", "content": stored_message})
 
-        system_prompt = {
-            "role": "system",
-            "content": (
+        sess = await _session_row(conversation_id)
+        agent = await _check_agent_key(sess["agent_key"])
+        provider, model_name = await _model_for(agent)
+        if agent is None:
+            persona = (
                 "Sen Cerybro, kullanıcının kişisel AI CEO'susun. "
                 "Türkçe iletişim kur. Hedefleri analiz et, işleri planla ve "
                 "görevleri uygun ajanlara vermeyi öner. "
@@ -1468,8 +1812,19 @@ async def cerybro_chat(data: ChatInput):
                 "açık adımlarla sun. Harcama, dış sistemlerde geri alınamaz "
                 "işlem ve yayınlama için onay iste.\n\n"
                 "Aktif ajanlar:\n" + await _agent_roster()
-            ),
-        }
+            )
+        else:
+            persona = (
+                "Sen " + agent["name"] + ", Cerybro ekibinde '" + agent["role"] + "' rolündeki uzman ajansın. "
+                "Kullanıcı İsmail Bey; onunla Türkçe konuş. Yalnızca kendi uzmanlık alanında derinlemesine yardım et; "
+                "alan dışı konularda bunu söyle ve Cerybro CEO'ya yönlendir.\n\n"
+                "Görev tanımın ve kuralların:\n" + (agent["description"] or "(tanımlanmamış)") + "\n\n"
+                "Bu sohbette dış sistemlere erişme veya iş çalıştırma yetkin yok; yapmadığın bir işi yapılmış gibi "
+                "gösterme. Harcama ve geri alınamaz işlemler için onay iste."
+            )
+        if sess["seed_summary"]:
+            persona += "\n\nÖnceki sohbetin özeti (kaldığın yerden devam et):\n" + sess["seed_summary"]
+        system_prompt = {"role": "system", "content": persona}
 
         answer, used_provider, used_model = await _cerybro_completion(
             [system_prompt] + history,
@@ -1491,6 +1846,10 @@ async def cerybro_chat(data: ChatInput):
                     INSERT INTO cerybro_chat_messages (conversation_id, role, content)
                     VALUES ($1, 'assistant', $2)
                 """, conversation_id, answer)
+                await conn.execute("""UPDATE cerybro_chat_sessions SET updated_at=NOW(),
+                    title=CASE WHEN title IN ('', 'Yeni sohbet') THEN left($2, 60) ELSE title END WHERE id=$1""",
+                    conversation_id, message or "Ek")
+        asyncio.create_task(_update_work_log(conversation_id))
 
         return {
             "reply": answer,
@@ -1511,7 +1870,9 @@ async def cerybro_chat_history(conversation_id: str = "cerybro-ceo"):
         SELECT role, content, created_at FROM cerybro_chat_messages
         WHERE conversation_id=$1 ORDER BY id DESC LIMIT 50
     """, conversation_id[:100])
-    return {"messages": [
+    await _ensure_sessions()
+    s = await db_pool.fetchrow("SELECT seed_summary, work_log, title FROM cerybro_chat_sessions WHERE id=$1", conversation_id[:100])
+    return {"session": dict(s) if s else None, "messages": [
         {"role": r["role"], "content": r["content"],
          "created_at": r["created_at"].isoformat()}
         for r in reversed(rows)

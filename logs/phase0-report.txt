@@ -1,0 +1,47 @@
+===== CERYBRO FAZ 0 RAPORU =====
+TARIH: Sat Oct 31 21:44:01 UTC 2026
+===== CPU =====
+2
+CPU(s):                                  2
+Model name:                              AMD EPYC 9354P 32-Core Processor
+===== RAM =====
+               total        used        free      shared  buff/cache   available
+Mem:           7.8Gi       1.6Gi       315Mi       126Mi       6.2Gi       6.1Gi
+Swap:             0B          0B          0B
+===== DISK =====
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        96G   42G   55G  44% /
+===== DOCKER =====
+Docker version 29.9.0, build f415da8
+Docker Compose version v5.6.0
+===== KONTEYNERLER =====
+affiliatex | Up 2 hours | 127.0.0.1:3010->3010/tcp
+gallopx | Up 28 hours (healthy) | 127.0.0.1:3000->3000/tcp
+caira-wp | Up 28 hours | 127.0.0.1:3030->80/tcp
+aetheria | Up 4 days | 127.0.0.1:3020->3020/tcp
+campora | Up 4 days | 127.0.0.1:3040->3000/tcp
+gallopx-staging | Up 4 days (healthy) | 127.0.0.1:3901->3000/tcp
+design-market-staging | Up 10 days (healthy) | 127.0.0.1:3021->3000/tcp
+affiliatex-staging | Up 10 days | 127.0.0.1:3011->3010/tcp
+caira-db | Up 2 weeks | 3306/tcp
+===== DOCKER AG LARI =====
+bridge | bridge
+caira-store_default | bridge
+cerybro-internal | bridge
+coolify | bridge
+host | host
+ncgk4gss0scws8swwgog4sw4 | bridge
+none | null
+===== CERYBRO AGI =====
+Internal=true
+===== PORT KONTROLU =====
+LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*          
+LISTEN 0      511          0.0.0.0:80        0.0.0.0:*          
+LISTEN 0      511          0.0.0.0:443       0.0.0.0:*          
+LISTEN 0      4096            [::]:22           [::]:*          
+LISTEN 0      511             [::]:80           [::]:*          
+LISTEN 0      511             [::]:443          [::]:*          
+===== NGINX =====
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+===== TAMAMLANDI =====

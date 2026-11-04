@@ -1,0 +1,80 @@
+00001 | name: cerybro
+00002 | 
+00003 | services:
+00004 |   postgres:
+00005 |     image: pgvector/pgvector:pg16
+00006 |     container_name: cerybro-postgres
+00007 |     restart: unless-stopped
+00008 |     env_file:
+00009 |       - /opt/ai-ceo/config/.env
+00010 |     environment:
+00011 |       POSTGRES_USER: cerybro
+00012 |       POSTGRES_DB: cerybro
+00013 |       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+00014 |     volumes:
+00015 |       - /opt/ai-ceo/data/postgres:/var/lib/postgresql/data
+00016 |     networks:
+00017 |       - cerybro-internal
+00018 |     shm_size: 256mb
+00019 |     mem_limit: 1200m
+00020 |     cpus: 1.0
+00021 |     healthcheck:
+00022 |       test: ["CMD-SHELL", "pg_isready -U cerybro -d cerybro"]
+00023 |       interval: 15s
+00024 |       timeout: 5s
+00025 |       retries: 5
+00026 | 
+00027 |   redis:
+00028 |     image: redis:7-alpine
+00029 |     container_name: cerybro-redis
+00030 |     restart: unless-stopped
+00031 |     env_file:
+00032 |       - /opt/ai-ceo/config/.env
+00033 |     command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+00034 |     volumes:
+00035 |       - /opt/ai-ceo/data/redis:/data
+00036 |     networks:
+00037 |       - cerybro-internal
+00038 |     mem_limit: 256m
+00039 |     cpus: 0.5
+00040 |     healthcheck:
+00041 |       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+00042 |       interval: 15s
+00043 |       timeout: 5s
+00044 |       retries: 5
+00045 | 
+00046 |   api:
+00047 |     env_file:
+00048 |       - ./config/.env
+00049 |     build:
+00050 |       context: ./app/backend
+00051 |     container_name: cerybro-api
+00052 |     restart: unless-stopped
+00053 |     environment:
+00054 |       DATABASE_URL: postgresql://cerybro:${POSTGRES_PASSWORD}@postgres:5432/cerybro
+00055 |       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+00056 |     ports:
+00057 |       - "127.0.0.1:3110:8000"
+00058 |     depends_on:
+00059 |       postgres:
+00060 |         condition: service_healthy
+00061 |       redis:
+00062 |         condition: service_healthy
+00063 |     networks:
+00064 |       - cerybro-internal
+00065 |     mem_limit: 700m
+00066 |     cpus: 0.7
+00067 |     healthcheck:
+00068 |       test:
+00069 |         - CMD
+00070 |         - python
+00071 |         - -c
+00072 |         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+00073 |       interval: 20s
+00074 |       timeout: 5s
+00075 |       retries: 5
+00076 |       start_period: 20s
+00077 | 
+00078 | networks:
+00079 |   cerybro-internal:
+00080 |     external: true

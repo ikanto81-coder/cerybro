@@ -1,0 +1,1 @@
+17 3 * * * root find /opt/ai-ceo/backups/deleted-agents -type f -mtime +7 -delete

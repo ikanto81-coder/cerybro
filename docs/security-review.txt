@@ -1,0 +1,487 @@
+
+
+========================= BACKEND =========================
+import os
+import re
+from contextlib import asynccontextmanager
+from typing import Optional
+
+import asyncpg
+import redis.asyncio as redis
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
+
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+REDIS_URL = os.environ["REDIS_URL"]
+
+db_pool = None
+
+DEFAULT_AGENTS = [
+    ("Vivo", "Vivaqua", "Dijital vivaryum projeleri", "#08b5a5", "rounded", "◆"),
+    ("Gyro", "GallopX", "Yazılım ve operasyon", "#f36b08", "circle", "●"),
+    ("Aveo", "Aetheria", "Strateji ve dijital projeler", "#08b5a5", "hex", "◆"),
+    ("Pyro", "SEO & Ads", "SEO ve reklam yönetimi", "#f39808", "triangle", "▲"),
+    ("Dsigno", "Design Market", "Tasarım pazaryeri yönetimi", "#1685ed", "circle", "●"),
+    ("Sleepo", "SleepyBaby", "Bebek ve uyku projesi", "#f32649", "circle", "●"),
+    ("Campo", "Campora App", "Uygulama geliştirme", "#f39808", "rounded", "●"),
+    ("Affro", "AffiliateX", "Affiliate pazarlama", "#1685ed", "circle", "●"),
+    ("Picasso", "Designer", "Tasarım ve görsel üretim", "#9255ed", "hex", "⬢"),
+    ("Spyro", "Lead & Sherlock", "Araştırma ve müşteri bulma", "#f32649", "hex", "⬢"),
+    ("Caira", "Store", "E-ticaret ve mağaza yönetimi", "#f39808", "circle", "●"),
+]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global db_pool
+    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                id BIGSERIAL PRIMARY KEY,
+                name VARCHAR(80) NOT NULL UNIQUE,
+                role VARCHAR(120) NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                color VARCHAR(7) NOT NULL DEFAULT '#1685ed',
+                shape VARCHAR(20) NOT NULL DEFAULT 'rounded',
+                symbol VARCHAR(12) NOT NULL DEFAULT '✦',
+                model_provider VARCHAR(40),
+                model_name VARCHAR(100),
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                memory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        for name, role, description, color, shape, symbol in DEFAULT_AGENTS:
+            await conn.execute("""
+                INSERT INTO agents
+                    (name, role, description, color, shape, symbol)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (name) DO NOTHING
+            """, name, role, description, color, shape, symbol)
+
+    yield
+
+    if db_pool:
+        await db_pool.close()
+
+
+app = FastAPI(
+    title="Cerybro CEO Engine",
+    version="0.2.0",
+    description="Cerybro merkezi ajan ve operasyon yönetim motoru",
+    lifespan=lifespan
+)
+
+
+class AgentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    role: str = Field(min_length=2, max_length=120)
+    description: str = ""
+    color: str = "#1685ed"
+    shape: str = "rounded"
+    symbol: str = "✦"
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    memory_enabled: bool = True
+    permissions: list[str] = []
+
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=80)
+    role: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    description: Optional[str] = None
+    color: Optional[str] = None
+    shape: Optional[str] = None
+    symbol: Optional[str] = None
+    model_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    memory_enabled: Optional[bool] = None
+    permissions: Optional[list[str]] = None
+    status: Optional[str] = None
+
+
+def validate_agent(data):
+    if "color" in data and data["color"] is not None:
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", data["color"]):
+            raise HTTPException(400, "Geçersiz renk kodu")
+
+    if "shape" in data and data["shape"] is not None:
+        if data["shape"] not in ["circle", "rounded", "hex", "diamond", "triangle"]:
+            raise HTTPException(400, "Geçersiz avatar şekli")
+
+    if "status" in data and data["status"] not in ["active", "paused"]:
+        raise HTTPException(400, "Geçersiz ajan durumu")
+
+
+def agent_dict(row):
+    return dict(row)
+
+
+@app.get("/")
+async def root():
+    return {
+        "name": "Cerybro CEO Engine",
+        "version": "0.2.0",
+        "status": "running"
+    }
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "cerybro-api"}
+
+
+@app.get("/ready")
+async def ready():
+    results = {}
+
+    try:
+        async with db_pool.acquire() as conn:
+            results["postgres"] = await conn.fetchval("SELECT 1")
+    except Exception:
+        results["postgres"] = "unavailable"
+
+    try:
+        client = redis.from_url(REDIS_URL, socket_connect_timeout=5)
+        results["redis"] = await client.ping()
+        await client.aclose()
+    except Exception:
+        results["redis"] = "unavailable"
+
+    if results.get("postgres") != 1 or results.get("redis") is not True:
+        raise HTTPException(status_code=503, detail=results)
+
+    return {
+        "status": "ready",
+        "postgres": "connected",
+        "redis": "connected"
+    }
+
+
+@app.get("/api/agents")
+async def list_agents(include_paused: bool = False):
+    async with db_pool.acquire() as conn:
+        if include_paused:
+            rows = await conn.fetch(
+                "SELECT * FROM agents ORDER BY created_at, id"
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM agents WHERE status='active' ORDER BY created_at, id"
+            )
+    return [agent_dict(row) for row in rows]
+
+
+@app.get("/api/agents/{agent_id}")
+async def get_agent(agent_id: int):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM agents WHERE id=$1", agent_id
+        )
+    if not row:
+        raise HTTPException(404, "Ajan bulunamadı")
+    return agent_dict(row)
+
+
+@app.post("/api/agents", status_code=201)
+async def create_agent(agent: AgentCreate):
+    data = agent.model_dump()
+    validate_agent(data)
+
+    async with db_pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow("""
+                INSERT INTO agents
+                (name, role, description, color, shape, symbol,
+                 model_provider, model_name, memory_enabled, permissions)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+                RETURNING *
+            """,
+                data["name"], data["role"], data["description"],
+                data["color"], data["shape"], data["symbol"],
+                data["model_provider"], data["model_name"],
+                data["memory_enabled"],
+                __import__("json").dumps(data["permissions"])
+            )
+        except asyncpg.UniqueViolationError:
+            raise HTTPException(409, "Bu ajan adı zaten kullanılıyor")
+
+    return agent_dict(row)
+
+
+@app.patch("/api/agents/{agent_id}")
+async def update_agent(agent_id: int, update: AgentUpdate):
+    data = update.dict(exclude_unset=True)
+    validate_agent(data)
+
+    if not data:
+        raise HTTPException(400, "Güncellenecek alan yok")
+
+    allowed = {
+        "name", "role", "description", "color", "shape", "symbol",
+        "model_provider", "model_name", "memory_enabled",
+        "permissions", "status"
+    }
+
+    async with db_pool.acquire() as conn:
+        current = await conn.fetchrow(
+            "SELECT id FROM agents WHERE id=$1", agent_id
+        )
+        if not current:
+            raise HTTPException(404, "Ajan bulunamadı")
+
+        values = []
+        assignments = []
+
+        for key, value in data.items():
+            if key not in allowed:
+                continue
+            if key == "permissions":
+                import json
+                values.append(json.dumps(value))
+                assignments.append(
+                    f"{key}=${len(values)}::jsonb"
+                )
+            else:
+                values.append(value)
+                assignments.append(f"{key}=${len(values)}")
+
+        values.append(agent_id)
+        sql = (
+            "UPDATE agents SET " + ", ".join(assignments) +
+            f", updated_at=NOW() WHERE id=${len(values)} RETURNING *"
+        )
+
+        try:
+            row = await conn.fetchrow(sql, *values)
+        except asyncpg.UniqueViolationError:
+            raise HTTPException(409, "Bu ajan adı zaten kullanılıyor")
+
+    return agent_dict(row)
+
+
+@app.delete("/api/agents/{agent_id}")
+async def pause_agent(agent_id: int):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            UPDATE agents
+            SET status='paused', updated_at=NOW()
+            WHERE id=$1
+            RETURNING *
+        """, agent_id)
+
+    if not row:
+        raise HTTPException(404, "Ajan bulunamadı")
+
+    return {"message": "Ajan pasife alındı", "agent": agent_dict(row)}
+
+
+========================= FRONTEND =========================
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
+<title>Cerybro | AI Organization</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:#171717;font-family:Arial,system-ui,sans-serif}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+.app{max-width:760px;margin:auto;min-height:100vh;padding-bottom:100px}
+header{height:90px;display:flex;align-items:center;justify-content:space-between;padding:15px 25px}
+.user{width:55px;height:55px;border-radius:50%;border:2px solid #eee;display:grid;place-items:center;color:#888;font-size:20px}
+.add{width:58px;height:58px;border:1px solid #eee;border-radius:50%;background:white;font-size:32px}
+.ceo{display:flex;align-items:center;flex-direction:column;padding:18px 0 25px}
+.avatar{width:70px;height:70px;display:grid;place-items:center;color:white;font-size:29px;font-weight:bold;flex-shrink:0}
+.ceo .avatar{width:112px;height:112px;border-radius:37px;font-size:42px;transform:rotate(-7deg);position:relative}
+.star{position:absolute;right:-8px;bottom:-5px;background:#f5a000;border:5px solid white;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;font-size:16px}
+.ceo strong{font-size:20px;font-weight:500;margin-top:15px}
+.ceo small{color:#999;margin-top:5px}
+.list{padding:0 17px}
+.item{display:flex;align-items:center;gap:15px;padding:13px 8px;min-height:96px;border-radius:14px}
+.item:active{background:#f7f8fa}
+.info{flex:1;min-width:0;cursor:pointer}
+.name{font-size:19px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preview{font-size:14px;color:#888;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.actions{display:flex;gap:5px}
+.smallbtn{border:0;background:#f4f5f7;border-radius:9px;padding:8px;color:#555;font-size:12px}
+.bottom{position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px max(14px,calc((100% - 720px)/2));display:flex;gap:10px;align-items:center;border-top:1px solid #eee}
+.search{height:55px;border:1px solid #eee;border-radius:35px;display:flex;align-items:center;gap:10px;padding:0 18px;flex:1}
+.search input{border:0;outline:0;width:100%;font-size:17px}
+.qr{width:54px;height:54px;border:1px solid #eee;border-radius:50%;background:white;font-size:23px}
+.modal,.chat{display:none;position:fixed;inset:0;background:#0006;z-index:20;align-items:center;justify-content:center;padding:15px}
+.panel{background:white;width:100%;max-width:490px;max-height:90vh;overflow:auto;border-radius:22px;padding:22px}
+.panel h2{margin:0 0 17px;font-size:21px}
+.field{margin:13px 0}
+.field label{display:block;font-size:13px;color:#555;margin-bottom:7px}
+.field input,.field select,.field textarea{width:100%;border:1px solid #ddd;border-radius:10px;padding:12px;background:white}
+.colors,.symbols,.shapes{display:flex;gap:9px;flex-wrap:wrap}
+.color{width:32px;height:32px;border-radius:50%;border:3px solid white;outline:1px solid #ddd}
+.color.selected{outline:3px solid #222}
+.choice{border:1px solid #ddd;background:white;border-radius:9px;padding:9px 12px}
+.choice.selected{border:2px solid #1685ed;background:#eef5ff}
+.previewbox{display:flex;align-items:center;gap:14px;background:#f6f7f9;padding:13px;border-radius:13px;margin:15px 0}
+.previewbox .avatar{width:54px;height:54px;font-size:22px}
+.primary{background:#1685ed;color:white;border:0;border-radius:11px;padding:13px 18px;font-weight:600}
+.secondary{background:#f0f1f3;color:#333;border:0;border-radius:11px;padding:13px 18px}
+.row{display:flex;gap:9px;margin-top:18px}
+.row button{flex:1}
+.chat{background:white;display:none;flex-direction:column;justify-content:initial;padding:0}
+.chathead{height:75px;border-bottom:1px solid #eee;display:flex;align-items:center;padding:12px 18px;gap:13px}
+.chathead .avatar{width:45px;height:45px;font-size:18px}
+.chatbody{flex:1;background:#fafafa;padding:20px}
+.notice{background:white;border:1px solid #eee;padding:15px;border-radius:14px;color:#777;font-size:14px;text-align:center}
+.chatfoot{display:flex;gap:9px;padding:12px;border-top:1px solid #eee}
+.chatfoot input{flex:1;min-width:0;border:1px solid #eee;border-radius:25px;padding:13px}
+.chatfoot button{background:#1685ed;color:white;border:0;border-radius:25px;padding:0 18px}
+#toast{position:fixed;bottom:85px;left:50%;transform:translateX(-50%);background:#222;color:white;padding:12px 18px;border-radius:20px;display:none;z-index:40;font-size:13px}
+@media(max-width:500px){.item{gap:11px}.item .avatar{width:59px;height:59px}.name{font-size:17px}.preview{font-size:13px}.actions{flex-direction:column}.smallbtn{padding:6px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header><div class="user">IK</div><button class="add" onclick="newAgent()">+</button></header>
+<div class="ceo">
+<div class="avatar" style="background:#fa2345">••<div class="star">★</div></div>
+<strong>Cerybro · CEO</strong>
+<small>AI Organization · Yönetim merkezi</small>
+</div>
+<div class="list" id="list"><p style="text-align:center;color:#888">Ajanlar yükleniyor...</p></div>
+</div>
+
+<div class="bottom">
+<button class="qr" onclick="newAgent()">＋</button>
+<div class="search"><span>⌕</span><input id="search" placeholder="Ajan ara..." oninput="filterAgents()"></div>
+</div>
+
+<div class="modal" id="editor">
+<div class="panel">
+<h2 id="formTitle">Yeni ajan oluştur</h2>
+<input type="hidden" id="agentId">
+<div class="field"><label>Ajan adı</label><input id="name" placeholder="Örn. Nova"></div>
+<div class="field"><label>Görev / uzmanlık adı</label><input id="role" placeholder="Örn. Pazar Araştırma Uzmanı"></div>
+<div class="field"><label>Açıklama</label><textarea id="description" rows="2" placeholder="Bu ajan hangi işleri yapacak?"></textarea></div>
+<div class="field"><label>Avatar şekli</label><div class="shapes">
+<button class="choice selected" data-shape="rounded" onclick="pickShape('rounded')">Kare</button>
+<button class="choice" data-shape="circle" onclick="pickShape('circle')">Daire</button>
+<button class="choice" data-shape="hex" onclick="pickShape('hex')">Altıgen</button>
+<button class="choice" data-shape="diamond" onclick="pickShape('diamond')">Elmas</button>
+<button class="choice" data-shape="triangle" onclick="pickShape('triangle')">Üçgen</button>
+</div></div>
+<div class="field"><label>Avatar rengi</label><div class="colors" id="colors"></div></div>
+<div class="field"><label>Avatar sembolü</label><div class="symbols" id="symbols"></div></div>
+<div class="field"><label>Model sağlayıcısı</label><select id="provider"><option value="">Henüz atanmadı</option><option>Gemini</option><option>Claude</option><option>Grok</option><option>OpenAI</option><option>Yerel model</option></select></div>
+<div class="field"><label>Model adı (isteğe bağlı)</label><input id="model" placeholder="Model kimliği"></div>
+<div class="previewbox"><div class="avatar" id="previewAvatar">✦</div><div><strong id="previewName">Yeni Ajan</strong><div id="previewRole" style="font-size:13px;color:#777;margin-top:5px">Uzmanlık</div></div></div>
+<div class="row"><button class="secondary" onclick="closeEditor()">Vazgeç</button><button class="primary" onclick="saveAgent()">Kaydet</button></div>
+</div>
+</div>
+
+<div class="chat" id="chat">
+<div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div><strong id="chatName"></strong><div style="font-size:12px;color:#888">Uzman ajan</div></div></div>
+<div class="chatbody"><div class="notice">Ajan kaydı aktif. Gerçek yapay zekâ sohbeti ve görev yürütme motoru bir sonraki entegrasyon aşamasında bağlanacak.</div></div>
+<div class="chatfoot"><input id="message" placeholder="Mesaj yaz..."><button onclick="sendMessage()">Gönder</button></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const API='/api/agents';
+let agents=[],shape='rounded',color='#1685ed',symbol='✦',editing=false;
+const palette=['#1685ed','#f32649','#f39808','#08b5a5','#9255ed','#222222','#e56caa','#70a83b','#795548','#00a5a8'];
+const glyphs=['✦','●','◆','★','⚙','⌘','♟','◈','▲','⬢','☀','✿'];
+
+function toast(t){let x=document.getElementById('toast');x.textContent=t;x.style.display='block';setTimeout(()=>x.style.display='none',2600)}
+function shapeStyle(s){return s==='circle'?'50%':s==='hex'?'22%':s==='diamond'?'8px':'18px'}
+function render(list=agents){
+document.getElementById('list').innerHTML=list.length?list.map(a=>`
+<div class="item">
+<div class="avatar" style="background:${a.color};border-radius:${shapeStyle(a.shape)};${a.shape==='diamond'?'transform:rotate(45deg)':''}" onclick="openChat(${a.id})">${a.symbol}</div>
+<div class="info" onclick="openChat(${a.id})"><div class="name">${esc(a.name)} · ${esc(a.role)}</div><div class="preview">${esc(a.description||'Uzman ajan')}</div></div>
+<div class="actions">
+<button class="smallbtn" onclick="editAgent(${a.id})">Düzenle</button>
+<button class="smallbtn" onclick="pauseAgent(${a.id})">Pasife al</button>
+</div>
+</div>`).join(''):'<p style="text-align:center;color:#888;padding:30px">Henüz ajan bulunmuyor.</p>';
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function loadAgents(){
+try{let r=await fetch(API+'?include_paused=true');if(!r.ok)throw Error();agents=await r.json();render();}catch(e){toast('Ajanlar yüklenemedi. API bağlantısını kontrol et.')}
+}
+function filterAgents(){let q=document.getElementById('search').value.toLowerCase();render(agents.filter(a=>(a.name+' '+a.role+' '+a.description).toLowerCase().includes(q)))}
+function setupChoices(){
+document.getElementById('colors').innerHTML=palette.map(c=>`<button class="color" style="background:${c}" onclick="pickColor('${c}')" data-color="${c}"></button>`).join('');
+document.getElementById('symbols').innerHTML=glyphs.map(s=>`<button class="choice" onclick="pickSymbol('${s}')" data-symbol="${s}">${s}</button>`).join('');
+}
+function pickShape(s){shape=s;document.querySelectorAll('[data-shape]').forEach(b=>b.classList.toggle('selected',b.dataset.shape===s));preview()}
+function pickColor(c){color=c;document.querySelectorAll('[data-color]').forEach(b=>b.classList.toggle('selected',b.dataset.color===c));preview()}
+function pickSymbol(s){symbol=s;document.querySelectorAll('[data-symbol]').forEach(b=>b.classList.toggle('selected',b.dataset.symbol===s));preview()}
+function preview(){
+let a=document.getElementById('previewAvatar');a.style.background=color;a.style.borderRadius=shapeStyle(shape);a.textContent=symbol;
+a.style.transform=shape==='diamond'?'rotate(45deg)':'none';
+document.getElementById('previewName').textContent=document.getElementById('name').value||'Yeni Ajan';
+document.getElementById('previewRole').textContent=document.getElementById('role').value||'Uzmanlık';
+}
+function newAgent(){
+editing=false;document.getElementById('formTitle').textContent='Yeni ajan oluştur';
+document.getElementById('agentId').value='';
+['name','role','description','model'].forEach(x=>document.getElementById(x).value='');
+document.getElementById('provider').value='';
+shape='rounded';color='#1685ed';symbol='✦';pickShape(shape);pickColor(color);pickSymbol(symbol);
+document.getElementById('editor').style.display='flex';preview();
+}
+function editAgent(id){
+let a=agents.find(x=>x.id===id);if(!a)return;editing=true;
+document.getElementById('formTitle').textContent='Ajanı düzenle';
+document.getElementById('agentId').value=id;
+document.getElementById('name').value=a.name;
+document.getElementById('role').value=a.role;
+document.getElementById('description').value=a.description||'';
+document.getElementById('model').value=a.model_name||'';
+document.getElementById('provider').value=a.model_provider||'';
+shape=a.shape;color=a.color;symbol=a.symbol;
+pickShape(shape);pickColor(color);pickSymbol(symbol);
+document.getElementById('editor').style.display='flex';preview();
+}
+async function saveAgent(){
+let data={name:document.getElementById('name').value.trim(),role:document.getElementById('role').value.trim(),description:document.getElementById('description').value,color,shape,symbol,model_provider:document.getElementById('provider').value||null,model_name:document.getElementById('model').value||null};
+if(!data.name||!data.role){toast('Ajan adı ve görev adı gerekli.');return}
+try{
+let id=document.getElementById('agentId').value;
+let r=await fetch(id?API+'/'+id:API,{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+let result=await r.json();if(!r.ok)throw Error(result.detail||'Kayıt başarısız');
+closeEditor();await loadAgents();toast(id?'Ajan güncellendi':'Yeni ajan kaydedildi');
+}catch(e){toast(e.message)}
+}
+async function pauseAgent(id){
+if(!confirm('Bu ajanı pasife almak istiyor musun?'))return;
+try{let r=await fetch(API+'/'+id,{method:'DELETE'});if(!r.ok)throw Error();await loadAgents();toast('Ajan pasife alındı')}catch(e){toast('İşlem başarısız')}
+}
+function closeEditor(){document.getElementById('editor').style.display='none'}
+function openChat(id){
+let a=agents.find(x=>x.id===id);if(!a)return;
+document.getElementById('chatName').textContent=a.name+' · '+a.role;
+let av=document.getElementById('chatAvatar');av.textContent=a.symbol;av.style.background=a.color;av.style.borderRadius=shapeStyle(a.shape);
+document.getElementById('chat').style.display='flex';
+}
+function closeChat(){document.getElementById('chat').style.display='none'}
+function sendMessage(){let m=document.getElementById('message');if(!m.value.trim())return;toast('Mesajlaşma motoru henüz bağlanmadı.');m.value=''}
+document.querySelectorAll('#name,#role').forEach(x=>x.addEventListener('input',preview));
+setupChoices();loadAgents();
+</script>
+</body>
+</html>
+
+
+========================= REQUIREMENTS =========================
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+asyncpg>=0.30,<1.0
+redis>=5.0,<7.0

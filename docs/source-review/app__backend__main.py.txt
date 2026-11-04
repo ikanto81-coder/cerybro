@@ -1,0 +1,1020 @@
+00001 | import os
+00002 | import re
+00003 | from contextlib import asynccontextmanager
+00004 | from typing import Optional
+00005 | 
+00006 | import asyncpg
+00007 | import redis.asyncio as redis
+00008 | from fastapi import FastAPI, HTTPException, Query
+00009 | from pydantic import BaseModel, Field
+00010 | 
+00011 | 
+00012 | DATABASE_URL = os.environ["DATABASE_URL"]
+00013 | REDIS_URL = os.environ["REDIS_URL"]
+00014 | 
+00015 | db_pool = None
+00016 | 
+00017 | DEFAULT_AGENTS = [
+00018 |     ("Vivo", "Vivaqua", "Dijital vivaryum projeleri", "#08b5a5", "rounded", "◆"),
+00019 |     ("Gyro", "GallopX", "Yazılım ve operasyon", "#f36b08", "circle", "●"),
+00020 |     ("Aveo", "Aetheria", "Strateji ve dijital projeler", "#08b5a5", "hex", "◆"),
+00021 |     ("Pyro", "SEO & Ads", "SEO ve reklam yönetimi", "#f39808", "triangle", "▲"),
+00022 |     ("Dsigno", "Design Market", "Tasarım pazaryeri yönetimi", "#1685ed", "circle", "●"),
+00023 |     ("Sleepo", "SleepyBaby", "Bebek ve uyku projesi", "#f32649", "circle", "●"),
+00024 |     ("Campo", "Campora App", "Uygulama geliştirme", "#f39808", "rounded", "●"),
+00025 |     ("Affro", "AffiliateX", "Affiliate pazarlama", "#1685ed", "circle", "●"),
+00026 |     ("Picasso", "Designer", "Tasarım ve görsel üretim", "#9255ed", "hex", "⬢"),
+00027 |     ("Spyro", "Lead & Sherlock", "Araştırma ve müşteri bulma", "#f32649", "hex", "⬢"),
+00028 |     ("Caira", "Store", "E-ticaret ve mağaza yönetimi", "#f39808", "circle", "●"),
+00029 | ]
+00030 | 
+00031 | 
+00032 | @asynccontextmanager
+00033 | async def lifespan(app: FastAPI):
+00034 |     global db_pool
+00035 |     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+00036 | 
+00037 |     async with db_pool.acquire() as conn:
+00038 |         await conn.execute("""
+00039 |             CREATE TABLE IF NOT EXISTS agents (
+00040 |                 id BIGSERIAL PRIMARY KEY,
+00041 |                 name VARCHAR(80) NOT NULL UNIQUE,
+00042 |                 role VARCHAR(120) NOT NULL,
+00043 |                 description TEXT NOT NULL DEFAULT '',
+00044 |                 color VARCHAR(7) NOT NULL DEFAULT '#1685ed',
+00045 |                 shape VARCHAR(20) NOT NULL DEFAULT 'rounded',
+00046 |                 symbol VARCHAR(12) NOT NULL DEFAULT '✦',
+00047 |                 model_provider VARCHAR(40),
+00048 |                 model_name VARCHAR(100),
+00049 |                 status VARCHAR(20) NOT NULL DEFAULT 'active',
+00050 |                 memory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+00051 |                 permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+00052 |                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+00053 |                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+00054 |             )
+00055 |         """)
+00056 | 
+00057 |         for name, role, description, color, shape, symbol in DEFAULT_AGENTS:
+00058 |             await conn.execute("""
+00059 |                 INSERT INTO agents
+00060 |                     (name, role, description, color, shape, symbol)
+00061 |                 VALUES ($1, $2, $3, $4, $5, $6)
+00062 |                 ON CONFLICT (name) DO NOTHING
+00063 |             """, name, role, description, color, shape, symbol)
+00064 | 
+00065 |     yield
+00066 | 
+00067 |     if db_pool:
+00068 |         await db_pool.close()
+00069 | 
+00070 | 
+00071 | app = FastAPI(
+00072 |     title="Cerybro CEO Engine",
+00073 |     version="0.2.0",
+00074 |     description="Cerybro merkezi ajan ve operasyon yönetim motoru",
+00075 |     lifespan=lifespan
+00076 | )
+00077 | 
+00078 | 
+00079 | class AgentCreate(BaseModel):
+00080 |     name: str = Field(min_length=2, max_length=80)
+00081 |     role: str = Field(min_length=2, max_length=120)
+00082 |     description: str = ""
+00083 |     color: str = "#1685ed"
+00084 |     shape: str = "rounded"
+00085 |     symbol: str = "✦"
+00086 |     model_provider: Optional[str] = None
+00087 |     model_name: Optional[str] = None
+00088 |     memory_enabled: bool = True
+00089 |     permissions: list[str] = []
+00090 | 
+00091 | 
+00092 | class AgentUpdate(BaseModel):
+00093 |     name: Optional[str] = Field(default=None, min_length=2, max_length=80)
+00094 |     role: Optional[str] = Field(default=None, min_length=2, max_length=120)
+00095 |     description: Optional[str] = None
+00096 |     color: Optional[str] = None
+00097 |     shape: Optional[str] = None
+00098 |     symbol: Optional[str] = None
+00099 |     model_provider: Optional[str] = None
+00100 |     model_name: Optional[str] = None
+00101 |     memory_enabled: Optional[bool] = None
+00102 |     permissions: Optional[list[str]] = None
+00103 |     status: Optional[str] = None
+00104 | 
+00105 | 
+00106 | def validate_agent(data):
+00107 |     if "color" in data and data["color"] is not None:
+00108 |         if not re.fullmatch(r"#[0-9a-fA-F]{6}", data["color"]):
+00109 |             raise HTTPException(400, "Geçersiz renk kodu")
+00110 | 
+00111 |     if "shape" in data and data["shape"] is not None:
+00112 |         if data["shape"] not in ["circle", "rounded", "hex", "diamond", "triangle"]:
+00113 |             raise HTTPException(400, "Geçersiz avatar şekli")
+00114 | 
+00115 |     if "status" in data and data["status"] not in ["active", "paused"]:
+00116 |         raise HTTPException(400, "Geçersiz ajan durumu")
+00117 | 
+00118 | 
+00119 | def agent_dict(row):
+00120 |     return dict(row)
+00121 | 
+00122 | 
+00123 | @app.get("/")
+00124 | async def root():
+00125 |     return {
+00126 |         "name": "Cerybro CEO Engine",
+00127 |         "version": "0.2.0",
+00128 |         "status": "running"
+00129 |     }
+00130 | 
+00131 | 
+00132 | @app.get("/health")
+00133 | async def health():
+00134 |     return {"status": "healthy", "service": "cerybro-api"}
+00135 | 
+00136 | 
+00137 | @app.get("/ready")
+00138 | async def ready():
+00139 |     results = {}
+00140 | 
+00141 |     try:
+00142 |         async with db_pool.acquire() as conn:
+00143 |             results["postgres"] = await conn.fetchval("SELECT 1")
+00144 |     except Exception:
+00145 |         results["postgres"] = "unavailable"
+00146 | 
+00147 |     try:
+00148 |         client = redis.from_url(REDIS_URL, socket_connect_timeout=5)
+00149 |         results["redis"] = await client.ping()
+00150 |         await client.aclose()
+00151 |     except Exception:
+00152 |         results["redis"] = "unavailable"
+00153 | 
+00154 |     if results.get("postgres") != 1 or results.get("redis") is not True:
+00155 |         raise HTTPException(status_code=503, detail=results)
+00156 | 
+00157 |     return {
+00158 |         "status": "ready",
+00159 |         "postgres": "connected",
+00160 |         "redis": "connected"
+00161 |     }
+00162 | 
+00163 | 
+00164 | @app.get("/api/agents")
+00165 | async def list_agents(include_paused: bool = False):
+00166 |     async with db_pool.acquire() as conn:
+00167 |         if include_paused:
+00168 |             rows = await conn.fetch(
+00169 |                 "SELECT * FROM agents ORDER BY created_at, id"
+00170 |             )
+00171 |         else:
+00172 |             rows = await conn.fetch(
+00173 |                 "SELECT * FROM agents WHERE status='active' ORDER BY created_at, id"
+00174 |             )
+00175 |     return [agent_dict(row) for row in rows]
+00176 | 
+00177 | 
+00178 | @app.get("/api/agents/{agent_id}")
+00179 | async def get_agent(agent_id: int):
+00180 |     async with db_pool.acquire() as conn:
+00181 |         row = await conn.fetchrow(
+00182 |             "SELECT * FROM agents WHERE id=$1", agent_id
+00183 |         )
+00184 |     if not row:
+00185 |         raise HTTPException(404, "Ajan bulunamadı")
+00186 |     return agent_dict(row)
+00187 | 
+00188 | 
+00189 | @app.post("/api/agents", status_code=201)
+00190 | async def create_agent(agent: AgentCreate):
+00191 |     data = agent.model_dump()
+00192 |     validate_agent(data)
+00193 | 
+00194 |     async with db_pool.acquire() as conn:
+00195 |         try:
+00196 |             row = await conn.fetchrow("""
+00197 |                 INSERT INTO agents
+00198 |                 (name, role, description, color, shape, symbol,
+00199 |                  model_provider, model_name, memory_enabled, permissions)
+00200 |                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+00201 |                 RETURNING *
+00202 |             """,
+00203 |                 data["name"], data["role"], data["description"],
+00204 |                 data["color"], data["shape"], data["symbol"],
+00205 |                 data["model_provider"], data["model_name"],
+00206 |                 data["memory_enabled"],
+00207 |                 __import__("json").dumps(data["permissions"])
+00208 |             )
+00209 |         except asyncpg.UniqueViolationError:
+00210 |             raise HTTPException(409, "Bu ajan adı zaten kullanılıyor")
+00211 | 
+00212 |     return agent_dict(row)
+00213 | 
+00214 | 
+00215 | @app.patch("/api/agents/{agent_id}")
+00216 | async def update_agent(agent_id: int, update: AgentUpdate):
+00217 |     data = update.dict(exclude_unset=True)
+00218 |     validate_agent(data)
+00219 | 
+00220 |     if not data:
+00221 |         raise HTTPException(400, "Güncellenecek alan yok")
+00222 | 
+00223 |     allowed = {
+00224 |         "name", "role", "description", "color", "shape", "symbol",
+00225 |         "model_provider", "model_name", "memory_enabled",
+00226 |         "permissions", "status"
+00227 |     }
+00228 | 
+00229 |     async with db_pool.acquire() as conn:
+00230 |         current = await conn.fetchrow(
+00231 |             "SELECT id FROM agents WHERE id=$1", agent_id
+00232 |         )
+00233 |         if not current:
+00234 |             raise HTTPException(404, "Ajan bulunamadı")
+00235 | 
+00236 |         values = []
+00237 |         assignments = []
+00238 | 
+00239 |         for key, value in data.items():
+00240 |             if key not in allowed:
+00241 |                 continue
+00242 |             if key == "permissions":
+00243 |                 import json
+00244 |                 values.append(json.dumps(value))
+00245 |                 assignments.append(
+00246 |                     f"{key}=${len(values)}::jsonb"
+00247 |                 )
+00248 |             else:
+00249 |                 values.append(value)
+00250 |                 assignments.append(f"{key}=${len(values)}")
+00251 | 
+00252 |         values.append(agent_id)
+00253 |         sql = (
+00254 |             "UPDATE agents SET " + ", ".join(assignments) +
+00255 |             f", updated_at=NOW() WHERE id=${len(values)} RETURNING *"
+00256 |         )
+00257 | 
+00258 |         try:
+00259 |             row = await conn.fetchrow(sql, *values)
+00260 |         except asyncpg.UniqueViolationError:
+00261 |             raise HTTPException(409, "Bu ajan adı zaten kullanılıyor")
+00262 | 
+00263 |     return agent_dict(row)
+00264 | 
+00265 | 
+00266 | @app.delete("/api/agents/{agent_id}")
+00267 | async def pause_agent(agent_id: int):
+00268 |     async with db_pool.acquire() as conn:
+00269 |         row = await conn.fetchrow("""
+00270 |             UPDATE agents
+00271 |             SET status='paused', updated_at=NOW()
+00272 |             WHERE id=$1
+00273 |             RETURNING *
+00274 |         """, agent_id)
+00275 | 
+00276 |     if not row:
+00277 |         raise HTTPException(404, "Ajan bulunamadı")
+00278 | 
+00279 |     return {"message": "Ajan pasife alındı", "agent": agent_dict(row)}
+00280 | 
+00281 | 
+00282 | # CERYBRO_AUTH_V1
+00283 | import base64, hashlib, hmac, json, time
+00284 | from fastapi.responses import JSONResponse
+00285 | from pydantic import BaseModel, Field
+00286 | 
+00287 | ADMIN_HASH=os.environ["CERYBRO_ADMIN_PASSWORD_HASH"]
+00288 | AUTH_SECRET=os.environ["CERYBRO_SECRET_KEY"]
+00289 | TOKEN_TTL=43200
+00290 | 
+00291 | class LoginInput(BaseModel):
+00292 |     password: str = Field(min_length=1,max_length=256)
+00293 | 
+00294 | def _b64(data):
+00295 |     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+00296 | 
+00297 | def _verify_password(password):
+00298 |     try:
+00299 |         alg,iterations,salt,digest=ADMIN_HASH.split("$")
+00300 |         if alg!="pbkdf2_sha256":
+00301 |             return False
+00302 |         actual=hashlib.pbkdf2_hmac(
+00303 |             "sha256",password.encode(),bytes.fromhex(salt),
+00304 |             int(iterations),dklen=len(bytes.fromhex(digest))
+00305 |         )
+00306 |         return hmac.compare_digest(actual,bytes.fromhex(digest))
+00307 |     except Exception:
+00308 |         return False
+00309 | 
+00310 | def _new_token():
+00311 |     header=_b64(b'{"alg":"HS256","typ":"JWT"}')
+00312 |     payload=_b64(json.dumps({
+00313 |         "sub":"admin","iat":int(time.time()),
+00314 |         "exp":int(time.time())+TOKEN_TTL
+00315 |     },separators=(",",":")).encode())
+00316 |     body=header+"."+payload
+00317 |     sig=hmac.new(AUTH_SECRET.encode(),body.encode(),hashlib.sha256).digest()
+00318 |     return body+"."+_b64(sig)
+00319 | 
+00320 | def _valid_token(token):
+00321 |     try:
+00322 |         a,b,sig=token.split(".")
+00323 |         body=a+"."+b
+00324 |         expected=_b64(hmac.new(
+00325 |             AUTH_SECRET.encode(),body.encode(),hashlib.sha256
+00326 |         ).digest())
+00327 |         if not hmac.compare_digest(sig,expected):
+00328 |             return False
+00329 |         payload=json.loads(base64.urlsafe_b64decode(
+00330 |             b+"="*((4-len(b)%4)%4)
+00331 |         ))
+00332 |         return payload.get("sub")=="admin" and int(payload["exp"])>int(time.time())
+00333 |     except Exception:
+00334 |         return False
+00335 | 
+00336 | @app.post("/api/login")
+00337 | async def admin_login(data: LoginInput):
+00338 |     if not _verify_password(data.password):
+00339 |         raise HTTPException(status_code=401,detail="Şifre hatalı")
+00340 |     return {"access_token":_new_token(),"token_type":"bearer","expires_in":TOKEN_TTL}
+00341 | 
+00342 | @app.middleware("http")
+00343 | async def cerybro_auth_guard(request,call_next):
+00344 |     path=request.url.path
+00345 |     if path.startswith("/api/") and path!="/api/login":
+00346 |         header=request.headers.get("authorization","")
+00347 |         token=header[7:].strip() if header.lower().startswith("bearer ") else ""
+00348 |         if not _valid_token(token):
+00349 |             return JSONResponse(status_code=401,content={"detail":"Yönetici girişi gerekli"})
+00350 |     return await call_next(request)
+00351 | 
+00352 | 
+00353 | # CERYBRO_PERSISTENT_TASK_ENGINE_V1
+00354 | import json as _task_json
+00355 | from pydantic import BaseModel as _TaskBase, Field as _TaskField
+00356 | 
+00357 | _task_table_ready = False
+00358 | 
+00359 | async def _ensure_task_table():
+00360 |     global _task_table_ready
+00361 |     if _task_table_ready:
+00362 |         return
+00363 |     async with db_pool.acquire() as conn:
+00364 |         await conn.execute("""
+00365 |             CREATE TABLE IF NOT EXISTS cerybro_tasks (
+00366 |                 id BIGSERIAL PRIMARY KEY,
+00367 |                 title VARCHAR(180) NOT NULL,
+00368 |                 description TEXT NOT NULL DEFAULT '',
+00369 |                 status VARCHAR(20) NOT NULL DEFAULT 'queued'
+00370 |                     CHECK (status IN ('queued','assigned','running','completed','failed','cancelled')),
+00371 |                 priority SMALLINT NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+00372 |                 assigned_agent_id BIGINT REFERENCES agents(id) ON DELETE SET NULL,
+00373 |                 payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+00374 |                 result JSONB,
+00375 |                 error TEXT,
+00376 |                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+00377 |                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+00378 |                 started_at TIMESTAMPTZ,
+00379 |                 completed_at TIMESTAMPTZ
+00380 |             )
+00381 |         """)
+00382 |         await conn.execute("CREATE INDEX IF NOT EXISTS idx_cerybro_tasks_status_priority ON cerybro_tasks(status, priority DESC, created_at)")
+00383 |         await conn.execute("CREATE INDEX IF NOT EXISTS idx_cerybro_tasks_agent ON cerybro_tasks(assigned_agent_id, status)")
+00384 |     _task_table_ready = True
+00385 | 
+00386 | class _TaskCreate(_TaskBase):
+00387 |     title: str = _TaskField(min_length=2, max_length=180)
+00388 |     description: str = _TaskField(default='', max_length=12000)
+00389 |     priority: int = _TaskField(default=3, ge=1, le=5)
+00390 |     assigned_agent_id: Optional[int] = None
+00391 |     payload: dict = _TaskField(default_factory=dict)
+00392 | 
+00393 | class _TaskUpdate(_TaskBase):
+00394 |     status: str
+00395 |     result: Optional[dict] = None
+00396 |     error: Optional[str] = _TaskField(default=None, max_length=12000)
+00397 | 
+00398 | @app.post('/api/tasks', status_code=201)
+00399 | async def create_task(data: _TaskCreate):
+00400 |     await _ensure_task_table()
+00401 |     async with db_pool.acquire() as conn:
+00402 |         if data.assigned_agent_id is not None:
+00403 |             agent = await conn.fetchrow(
+00404 |                 "SELECT id FROM agents WHERE id=$1 AND status='active'",
+00405 |                 data.assigned_agent_id
+00406 |             )
+00407 |             if not agent:
+00408 |                 raise HTTPException(status_code=404, detail='Aktif ajan bulunamadı')
+00409 |         status = 'assigned' if data.assigned_agent_id is not None else 'queued'
+00410 |         row = await conn.fetchrow("""
+00411 |             INSERT INTO cerybro_tasks
+00412 |             (title, description, priority, assigned_agent_id, payload, status)
+00413 |             VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING *
+00414 |         """, data.title, data.description, data.priority,
+00415 |              data.assigned_agent_id, _task_json.dumps(data.payload), status)
+00416 |     return dict(row)
+00417 | 
+00418 | @app.get('/api/tasks')
+00419 | async def list_tasks(status: Optional[str] = None, limit: int = Query(default=50, ge=1, le=200)):
+00420 |     await _ensure_task_table()
+00421 |     async with db_pool.acquire() as conn:
+00422 |         if status:
+00423 |             rows = await conn.fetch(
+00424 |                 "SELECT * FROM cerybro_tasks WHERE status=$1 ORDER BY priority DESC, created_at ASC LIMIT $2",
+00425 |                 status, limit
+00426 |             )
+00427 |         else:
+00428 |             rows = await conn.fetch(
+00429 |                 "SELECT * FROM cerybro_tasks ORDER BY priority DESC, created_at ASC LIMIT $1",
+00430 |                 limit
+00431 |             )
+00432 |     return [dict(row) for row in rows]
+00433 | 
+00434 | @app.get('/api/tasks/{task_id}')
+00435 | async def get_task(task_id: int):
+00436 |     await _ensure_task_table()
+00437 |     async with db_pool.acquire() as conn:
+00438 |         row = await conn.fetchrow("SELECT * FROM cerybro_tasks WHERE id=$1", task_id)
+00439 |     if not row:
+00440 |         raise HTTPException(status_code=404, detail='Görev bulunamadı')
+00441 |     return dict(row)
+00442 | 
+00443 | @app.post('/api/tasks/{task_id}/assign')
+00444 | async def assign_task(task_id: int, agent_id: int):
+00445 |     await _ensure_task_table()
+00446 |     async with db_pool.acquire() as conn:
+00447 |         agent = await conn.fetchrow(
+00448 |             "SELECT id FROM agents WHERE id=$1 AND status='active'", agent_id
+00449 |         )
+00450 |         if not agent:
+00451 |             raise HTTPException(status_code=404, detail='Aktif ajan bulunamadı')
+00452 |         row = await conn.fetchrow("""
+00453 |             UPDATE cerybro_tasks
+00454 |             SET assigned_agent_id=$2, status='assigned', error=NULL, updated_at=NOW()
+00455 |             WHERE id=$1 AND status IN ('queued','assigned')
+00456 |             RETURNING *
+00457 |         """, task_id, agent_id)
+00458 |     if not row:
+00459 |         raise HTTPException(status_code=409, detail='Görev bulunamadı veya atanabilir durumda değil')
+00460 |     return dict(row)
+00461 | 
+00462 | @app.patch('/api/tasks/{task_id}')
+00463 | async def update_task(task_id: int, data: _TaskUpdate):
+00464 |     await _ensure_task_table()
+00465 |     allowed = {'queued','assigned','running','completed','failed','cancelled'}
+00466 |     if data.status not in allowed:
+00467 |         raise HTTPException(status_code=400, detail='Geçersiz görev durumu')
+00468 |     async with db_pool.acquire() as conn:
+00469 |         row = await conn.fetchrow("""
+00470 |             UPDATE cerybro_tasks SET status=$2,
+00471 |                 result=COALESCE($3::jsonb,result), error=$4,
+00472 |                 started_at=CASE WHEN $2='running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+00473 |                 completed_at=CASE WHEN $2 IN ('completed','failed','cancelled') THEN NOW() ELSE NULL END,
+00474 |                 updated_at=NOW()
+00475 |             WHERE id=$1 RETURNING *
+00476 |         """, task_id, data.status,
+00477 |              _task_json.dumps(data.result) if data.result is not None else None,
+00478 |              data.error)
+00479 |     if not row:
+00480 |         raise HTTPException(status_code=404, detail='Görev bulunamadı')
+00481 |     return dict(row)
+00482 | 
+00483 | 
+00484 | 
+00485 | # CERYBRO_TASK_API_V1
+00486 | from pydantic import BaseModel, Field
+00487 | from typing import Optional
+00488 | 
+00489 | class TaskCreateInput(BaseModel):
+00490 |     title: str = Field(min_length=2, max_length=160)
+00491 |     description: str = Field(default="", max_length=10000)
+00492 |     agent_id: Optional[int] = None
+00493 |     priority: str = "normal"
+00494 | 
+00495 | class TaskAssignInput(BaseModel):
+00496 |     agent_id: int
+00497 | 
+00498 | class TaskCompleteInput(BaseModel):
+00499 |     result: str = Field(default="", max_length=20000)
+00500 | 
+00501 | async def _cerybro_tasks_table():
+00502 |     if db_pool is None:
+00503 |         raise HTTPException(status_code=503, detail="Veritabanı hazır değil")
+00504 |     async with db_pool.acquire() as conn:
+00505 |         await conn.execute("""
+00506 |             CREATE TABLE IF NOT EXISTS cerybro_tasks (
+00507 |                 id BIGSERIAL PRIMARY KEY,
+00508 |                 title VARCHAR(160) NOT NULL,
+00509 |                 description TEXT NOT NULL DEFAULT '',
+00510 |                 status VARCHAR(20) NOT NULL DEFAULT 'queued',
+00511 |                 priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+00512 |                 assigned_agent_id BIGINT REFERENCES agents(id) ON DELETE SET NULL,
+00513 |                 result TEXT NOT NULL DEFAULT '',
+00514 |                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+00515 |                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+00516 |             )
+00517 |         """)
+00518 | 
+00519 | @app.post("/api/tasks", status_code=201)
+00520 | async def cerybro_create_task(data: TaskCreateInput):
+00521 |     if data.priority not in ("low", "normal", "high", "urgent"):
+00522 |         raise HTTPException(400, "Geçersiz öncelik")
+00523 |     await _cerybro_tasks_table()
+00524 |     async with db_pool.acquire() as conn:
+00525 |         if data.agent_id is not None:
+00526 |             agent = await conn.fetchrow(
+00527 |                 "SELECT id FROM agents WHERE id=$1 AND status='active'",
+00528 |                 data.agent_id
+00529 |             )
+00530 |             if not agent:
+00531 |                 raise HTTPException(404, "Aktif ajan bulunamadı")
+00532 |         row = await conn.fetchrow("""
+00533 |             INSERT INTO cerybro_tasks
+00534 |             (title, description, priority, assigned_agent_id, status)
+00535 |             VALUES ($1,$2,$3,$4,$5)
+00536 |             RETURNING *
+00537 |         """, data.title, data.description, data.priority,
+00538 |              data.agent_id, "assigned" if data.agent_id else "queued")
+00539 |         return dict(row)
+00540 | 
+00541 | @app.get("/api/tasks")
+00542 | async def cerybro_list_tasks(limit: int = 50):
+00543 |     await _cerybro_tasks_table()
+00544 |     limit = max(1, min(limit, 100))
+00545 |     async with db_pool.acquire() as conn:
+00546 |         rows = await conn.fetch(
+00547 |             "SELECT * FROM cerybro_tasks ORDER BY created_at DESC LIMIT $1",
+00548 |             limit
+00549 |         )
+00550 |         return [dict(row) for row in rows]
+00551 | 
+00552 | @app.get("/api/tasks/{task_id}")
+00553 | async def cerybro_get_task(task_id: int):
+00554 |     await _cerybro_tasks_table()
+00555 |     async with db_pool.acquire() as conn:
+00556 |         row = await conn.fetchrow(
+00557 |             "SELECT * FROM cerybro_tasks WHERE id=$1", task_id
+00558 |         )
+00559 |         if not row:
+00560 |             raise HTTPException(404, "Görev bulunamadı")
+00561 |         return dict(row)
+00562 | 
+00563 | @app.post("/api/tasks/{task_id}/assign")
+00564 | async def cerybro_assign_task(task_id: int, data: TaskAssignInput):
+00565 |     await _cerybro_tasks_table()
+00566 |     async with db_pool.acquire() as conn:
+00567 |         agent = await conn.fetchrow(
+00568 |             "SELECT id FROM agents WHERE id=$1 AND status='active'",
+00569 |             data.agent_id
+00570 |         )
+00571 |         if not agent:
+00572 |             raise HTTPException(404, "Aktif ajan bulunamadı")
+00573 |         row = await conn.fetchrow("""
+00574 |             UPDATE cerybro_tasks
+00575 |             SET assigned_agent_id=$2, status='assigned', updated_at=NOW()
+00576 |             WHERE id=$1 AND status IN ('queued','assigned')
+00577 |             RETURNING *
+00578 |         """, task_id, data.agent_id)
+00579 |         if not row:
+00580 |             raise HTTPException(409, "Görev bulunamadı veya çalışmaya başlamış")
+00581 |         return dict(row)
+00582 | 
+00583 | @app.post("/api/tasks/{task_id}/claim")
+00584 | async def cerybro_claim_task(task_id: int):
+00585 |     await _cerybro_tasks_table()
+00586 |     async with db_pool.acquire() as conn:
+00587 |         row = await conn.fetchrow("""
+00588 |             UPDATE cerybro_tasks
+00589 |             SET status='running', updated_at=NOW()
+00590 |             WHERE id=$1 AND status='assigned'
+00591 |             RETURNING *
+00592 |         """, task_id)
+00593 |         if not row:
+00594 |             raise HTTPException(409, "Görev atanmış değil veya başlatılamıyor")
+00595 |         return dict(row)
+00596 | 
+00597 | @app.post("/api/tasks/{task_id}/complete")
+00598 | async def cerybro_complete_task(task_id: int, data: TaskCompleteInput):
+00599 |     await _cerybro_tasks_table()
+00600 |     async with db_pool.acquire() as conn:
+00601 |         row = await conn.fetchrow("""
+00602 |             UPDATE cerybro_tasks
+00603 |             SET status='completed', result=$2, updated_at=NOW()
+00604 |             WHERE id=$1 AND status='running'
+00605 |             RETURNING *
+00606 |         """, task_id, data.result)
+00607 |         if not row:
+00608 |             raise HTTPException(409, "Çalışan görev bulunamadı")
+00609 |         return dict(row)
+00610 | 
+00611 | 
+00612 | 
+00613 | # CERYBRO_MODEL_ROUTER_V1
+00614 | import base64
+00615 | import hashlib
+00616 | from cryptography.fernet import Fernet
+00617 | 
+00618 | class ModelKeyInput(BaseModel):
+00619 |     api_key: str = Field(min_length=8, max_length=500)
+00620 | 
+00621 | class ModelTestInput(BaseModel):
+00622 |     provider: str
+00623 |     model_name: str = Field(min_length=2, max_length=120)
+00624 |     prompt: str = Field(min_length=2, max_length=4000)
+00625 | 
+00626 | 
+00627 | 
+00628 | # CERYBRO CEO CHAT - MODEL ROUTER V2
+00629 | import json as _cerybro_json
+00630 | import os as _cerybro_os
+00631 | 
+00632 | def _cerybro_default_model(provider):
+00633 |     defaults = {
+00634 |         "gemini": "gemini-2.5-flash",
+00635 |         "claude": "claude-sonnet-4-5",
+00636 |         "openai": "gpt-4.1-mini",
+00637 |         "grok": "grok-3-mini",
+00638 |         "openrouter": "openrouter/auto",
+00639 |         "ollama": "qwen3:1.7b",
+00640 |     }
+00641 |     env_name = "CERYBRO_" + provider.upper() + "_MODEL"
+00642 |     return _cerybro_os.getenv(env_name, defaults.get(provider, ""))
+00643 | 
+00644 | async def _cerybro_get_model(provider=None, model_name=None):
+00645 |     provider = provider or _cerybro_os.getenv("CERYBRO_CEO_PROVIDER", "gemini")
+00646 |     if provider not in MODEL_PROVIDERS:
+00647 |         raise ValueError("Desteklenmeyen model sağlayıcısı: " + str(provider))
+00648 | 
+00649 |     await _model_keys_table()
+00650 | 
+00651 |     async with db_pool.acquire() as conn:
+00652 |         row = await conn.fetchrow(
+00653 |             "SELECT encrypted_key FROM model_credentials WHERE provider=$1",
+00654 |             provider
+00655 |         )
+00656 | 
+00657 |     if provider == "ollama":
+00658 |         api_key = "ollama"
+00659 |     else:
+00660 |         if not row:
+00661 |             raise ValueError(
+00662 |                 provider + " API anahtarı Model Merkezi'nde kayıtlı değil."
+00663 |             )
+00664 |         api_key = _model_cipher().decrypt(
+00665 |             row["encrypted_key"].encode()
+00666 |         ).decode()
+00667 | 
+00668 |     model_name = model_name or _cerybro_default_model(provider)
+00669 |     if not model_name:
+00670 |         raise ValueError("Model adı tanımlanmamış: " + provider)
+00671 | 
+00672 |     model = MODEL_PROVIDERS[provider] + "/" + model_name
+00673 |     return provider, model, api_key
+00674 | 
+00675 | async def _cerybro_completion(messages, provider=None, model_name=None,
+00676 |                               max_tokens=1200):
+00677 |     import litellm
+00678 | 
+00679 |     provider, model, api_key = await _cerybro_get_model(provider, model_name)
+00680 |     response = await litellm.acompletion(
+00681 |         model=model,
+00682 |         api_key=api_key,
+00683 |         messages=messages,
+00684 |         max_tokens=max_tokens,
+00685 |         temperature=0.3,
+00686 |         timeout=120,
+00687 |     )
+00688 |     answer = response.choices[0].message.content
+00689 |     if not answer:
+00690 |         raise ValueError("Model boş yanıt döndürdü.")
+00691 |     return str(answer).strip(), provider, model
+00692 | 
+00693 | @app.post("/api/chat")
+00694 | async def cerybro_chat(data: dict):
+00695 |     message = str(data.get("message", "")).strip()[:6000]
+00696 |     conversation_id = str(data.get("conversation_id", "default"))[:100]
+00697 |     agent_name = str(data.get("agent_name", "Cerybro"))[:100]
+00698 | 
+00699 |     if not message:
+00700 |         raise HTTPException(400, "Mesaj boş olamaz")
+00701 | 
+00702 |     await db_pool.execute("""
+00703 |         CREATE TABLE IF NOT EXISTS cerybro_chat_messages (
+00704 |             id BIGSERIAL PRIMARY KEY,
+00705 |             conversation_id VARCHAR(100) NOT NULL,
+00706 |             role VARCHAR(20) NOT NULL,
+00707 |             content TEXT NOT NULL,
+00708 |             created_at TIMESTAMPTZ DEFAULT NOW()
+00709 |         )
+00710 |     """)
+00711 | 
+00712 |     rows = await db_pool.fetch("""
+00713 |         SELECT role, content FROM cerybro_chat_messages
+00714 |         WHERE conversation_id=$1
+00715 |         ORDER BY id DESC LIMIT 12
+00716 |     """, conversation_id)
+00717 | 
+00718 |     history = [
+00719 |         {"role": r["role"], "content": r["content"]}
+00720 |         for r in reversed(rows)
+00721 |     ]
+00722 | 
+00723 |     await db_pool.execute("""
+00724 |         INSERT INTO cerybro_chat_messages
+00725 |         (conversation_id, role, content)
+00726 |         VALUES ($1, 'user', $2)
+00727 |     """, conversation_id, message)
+00728 | 
+00729 |     system_prompt = (
+00730 |         "Sen Cerybro'sun. Kullanıcının kişisel AI CEO'susun. "
+00731 |         "Türkçe konuş. Açık, dürüst ve çözüm odaklı ol. "
+00732 |         "Projeleri, görevleri ve uzman ajanları koordine eden "
+00733 |         "bir yönetici gibi davran. Gerçekte yapmadığın işlemleri "
+00734 |         "yaptığını iddia etme. Araç erişimin yoksa bunu belirt. "
+00735 |         "Harici işlem, harcama veya silme gerektiren konularda "
+00736 |         "onay iste. Şu anki konuşma alanı: " + agent_name
+00737 |     )
+00738 | 
+00739 |     messages = [
+00740 |         {"role": "system", "content": system_prompt},
+00741 |         *history,
+00742 |         {"role": "user", "content": message},
+00743 |     ]
+00744 | 
+00745 |     try:
+00746 |         answer, provider, model = await _cerybro_completion(
+00747 |             messages, max_tokens=1400
+00748 |         )
+00749 |         await db_pool.execute("""
+00750 |             INSERT INTO cerybro_chat_messages
+00751 |             (conversation_id, role, content)
+00752 |             VALUES ($1, 'assistant', $2)
+00753 |         """, conversation_id, answer)
+00754 | 
+00755 |         return {
+00756 |             "status": "ok",
+00757 |             "response": answer,
+00758 |             "provider": provider,
+00759 |             "model": model,
+00760 |         }
+00761 |     except Exception as exc:
+00762 |         raise HTTPException(
+00763 |             502, "Model yanıt hatası: " + str(exc)[:300]
+00764 |         )
+00765 | 
+00766 | # CERYBRO TASK EXECUTION V1
+00767 | @app.post("/api/tasks/{task_id}/execute")
+00768 | async def cerybro_execute_task(task_id: int):
+00769 |     await _cerybro_tasks_table()
+00770 | 
+00771 |     async with db_pool.acquire() as conn:
+00772 |         async with conn.transaction():
+00773 |             task = await conn.fetchrow("""
+00774 |                 SELECT * FROM cerybro_tasks
+00775 |                 WHERE id=$1 FOR UPDATE
+00776 |             """, task_id)
+00777 | 
+00778 |             if not task:
+00779 |                 raise HTTPException(404, "Görev bulunamadı")
+00780 | 
+00781 |             if task["status"] not in ("queued", "assigned"):
+00782 |                 raise HTTPException(
+00783 |                     409, "Görev çalıştırılabilir durumda değil"
+00784 |                 )
+00785 | 
+00786 |             agent_id = task["assigned_agent_id"]
+00787 |             if not agent_id:
+00788 |                 raise HTTPException(
+00789 |                     409, "Göreve önce bir aktif ajan atanmalı"
+00790 |                 )
+00791 | 
+00792 |             agent = await conn.fetchrow("""
+00793 |                 SELECT * FROM agents
+00794 |                 WHERE id=$1 AND status='active'
+00795 |             """, agent_id)
+00796 | 
+00797 |             if not agent:
+00798 |                 raise HTTPException(404, "Aktif ajan bulunamadı")
+00799 | 
+00800 |             await conn.execute("""
+00801 |                 UPDATE cerybro_tasks
+00802 |                 SET status='running', started_at=NOW(),
+00803 |                     updated_at=NOW(), error=NULL
+00804 |                 WHERE id=$1
+00805 |             """, task_id)
+00806 | 
+00807 |     try:
+00808 |         provider = agent["model_provider"] or None
+00809 |         model_name = agent["model_name"] or None
+00810 | 
+00811 |         payload = task["payload"]
+00812 |         if not isinstance(payload, str):
+00813 |             payload = _cerybro_json.dumps(payload, ensure_ascii=False)
+00814 | 
+00815 |         prompt = (
+00816 |             "Görevin: " + str(task["title"]) + "\n\n"
+00817 |             "Açıklama:\n" + str(task["description"]) + "\n\n"
+00818 |             "Ek veriler:\n" + payload + "\n\n"
+00819 |             "Görevi analiz et ve uygulanabilir, açık bir sonuç üret. "
+00820 |             "Gerçekleştirmediğin harici işlemleri gerçekleştirmiş gibi "
+00821 |             "gösterme. Araç erişimin yoksa bunu açıkça belirt."
+00822 |         )
+00823 | 
+00824 |         answer, used_provider, used_model = await _cerybro_completion(
+00825 |             [
+00826 |                 {
+00827 |                     "role": "system",
+00828 |                     "content": (
+00829 |                         "Sen Cerybro bünyesinde çalışan uzman bir ajansın. "
+00830 |                         "Türkçe, somut ve sonuç odaklı çalış."
+00831 |                         "\nAjan: " + str(agent["name"]) +
+00832 |                         "\nRol: " + str(agent["role"]) +
+00833 |                         "\nUzmanlık: " + str(agent["description"])
+00834 |                     ),
+00835 |                 },
+00836 |                 {"role": "user", "content": prompt},
+00837 |             ],
+00838 |             provider=provider,
+00839 |             model_name=model_name,
+00840 |             max_tokens=1800,
+00841 |         )
+00842 | 
+00843 |         result = {
+00844 |             "output": answer,
+00845 |             "provider": used_provider,
+00846 |             "model": used_model,
+00847 |             "agent_id": agent_id,
+00848 |         }
+00849 | 
+00850 |         await db_pool.execute("""
+00851 |             UPDATE cerybro_tasks
+00852 |             SET status='completed',
+00853 |                 result=$2::jsonb,
+00854 |                 error=NULL,
+00855 |                 completed_at=NOW(),
+00856 |                 updated_at=NOW()
+00857 |             WHERE id=$1 AND status='running'
+00858 |         """, task_id, _cerybro_json.dumps(result, ensure_ascii=False))
+00859 | 
+00860 |         return {
+00861 |             "status": "completed",
+00862 |             "task_id": task_id,
+00863 |             "result": result,
+00864 |         }
+00865 | 
+00866 |     except Exception as exc:
+00867 |         await db_pool.execute("""
+00868 |             UPDATE cerybro_tasks
+00869 |             SET status='failed', error=$2, updated_at=NOW()
+00870 |             WHERE id=$1 AND status='running'
+00871 |         """, task_id, str(exc)[:12000])
+00872 |         raise HTTPException(502, "Görev çalıştırma hatası: " + str(exc)[:300])
+00873 | 
+00874 | 
+00875 | 
+00876 | @app.get("/api/chat/history")
+00877 | async def cerybro_chat_history(conversation_id: str = "default"):
+00878 |     await db_pool.execute("""
+00879 |         CREATE TABLE IF NOT EXISTS cerybro_chat_messages (
+00880 |             id BIGSERIAL PRIMARY KEY,
+00881 |             conversation_id VARCHAR(100) NOT NULL,
+00882 |             role VARCHAR(20) NOT NULL,
+00883 |             content TEXT NOT NULL,
+00884 |             created_at TIMESTAMPTZ DEFAULT NOW()
+00885 |         )
+00886 |     """)
+00887 |     rows = await db_pool.fetch("""
+00888 |         SELECT role, content, created_at
+00889 |         FROM cerybro_chat_messages
+00890 |         WHERE conversation_id=$1
+00891 |         ORDER BY id DESC LIMIT 50
+00892 |     """, conversation_id[:100])
+00893 |     return {"messages": [
+00894 |         {"role": r["role"], "content": r["content"],
+00895 |          "created_at": r["created_at"].isoformat()}
+00896 |         for r in reversed(rows)
+00897 |     ]}
+00898 | 
+00899 | 
+00900 | 
+00901 | MODEL_PROVIDERS = {
+00902 |     "gemini": "gemini",
+00903 |     "claude": "anthropic",
+00904 |     "openai": "openai",
+00905 |     "grok": "xai",
+00906 |     "openrouter": "openrouter",
+00907 |     "ollama": "ollama"
+00908 | }
+00909 | 
+00910 | def _model_cipher():
+00911 |     digest = hashlib.sha256(
+00912 |         AUTH_SECRET.encode() + b":cerybro-model-credentials-v1"
+00913 |     ).digest()
+00914 |     return Fernet(base64.urlsafe_b64encode(digest))
+00915 | 
+00916 | async def _model_keys_table():
+00917 |     async with db_pool.acquire() as conn:
+00918 |         await conn.execute("""
+00919 |             CREATE TABLE IF NOT EXISTS model_credentials (
+00920 |                 provider VARCHAR(30) PRIMARY KEY,
+00921 |                 encrypted_key TEXT NOT NULL,
+00922 |                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+00923 |             )
+00924 |         """)
+00925 | 
+00926 | @app.get("/api/models/providers")
+00927 | async def model_provider_status():
+00928 |     await _model_keys_table()
+00929 |     async with db_pool.acquire() as conn:
+00930 |         rows = await conn.fetch(
+00931 |             "SELECT provider, updated_at FROM model_credentials ORDER BY provider"
+00932 |         )
+00933 |     configured = {r["provider"]: r["updated_at"].isoformat() for r in rows}
+00934 |     configured["ollama"] = "local (API anahtarı gerekmez)"
+00935 |     return {
+00936 |         "supported": list(MODEL_PROVIDERS.keys()),
+00937 |         "configured": configured,
+00938 |         "router": "LiteLLM"
+00939 |     }
+00940 | 
+00941 | @app.put("/api/models/keys/{provider}")
+00942 | async def save_model_key(provider: str, data: ModelKeyInput):
+00943 |     if provider not in MODEL_PROVIDERS:
+00944 |         raise HTTPException(400, "Desteklenmeyen model sağlayıcısı")
+00945 |     if provider == "ollama":
+00946 |         return {"status": "saved", "provider": "ollama", "key": "not_required"}
+00947 |     await _model_keys_table()
+00948 |     encrypted = _model_cipher().encrypt(data.api_key.encode()).decode()
+00949 |     async with db_pool.acquire() as conn:
+00950 |         await conn.execute("""
+00951 |             INSERT INTO model_credentials(provider, encrypted_key)
+00952 |             VALUES($1,$2)
+00953 |             ON CONFLICT(provider) DO UPDATE
+00954 |             SET encrypted_key=EXCLUDED.encrypted_key, updated_at=NOW()
+00955 |         """, provider, encrypted)
+00956 |     return {"status": "saved", "provider": provider, "key": "encrypted"}
+00957 | 
+00958 | @app.delete("/api/models/keys/{provider}")
+00959 | async def delete_model_key(provider: str):
+00960 |     if provider not in MODEL_PROVIDERS:
+00961 |         raise HTTPException(400, "Desteklenmeyen sağlayıcı")
+00962 |     await _model_keys_table()
+00963 |     async with db_pool.acquire() as conn:
+00964 |         result = await conn.execute(
+00965 |             "DELETE FROM model_credentials WHERE provider=$1", provider
+00966 |         )
+00967 |     return {"status": "deleted", "provider": provider, "result": result}
+00968 | 
+00969 | @app.post("/api/models/test")
+00970 | async def test_model_connection(data: ModelTestInput):
+00971 |     if data.provider not in MODEL_PROVIDERS:
+00972 |         raise HTTPException(400, "Desteklenmeyen sağlayıcı")
+00973 |     if data.provider == "ollama":
+00974 |         try:
+00975 |             from litellm import acompletion
+00976 |             response = await acompletion(
+00977 |                 model=f"ollama_chat/{data.model_name}",
+00978 |                 api_base="http://cerybro-ollama:11434",
+00979 |                 messages=[{"role": "user", "content": data.prompt}],
+00980 |                 max_tokens=120
+00981 |             )
+00982 |             return {
+00983 |                 "status": "connected",
+00984 |                 "provider": "ollama",
+00985 |                 "model": data.model_name,
+00986 |                 "response": response.choices[0].message.content
+00987 |             }
+00988 |         except Exception as exc:
+00989 |             raise HTTPException(502, "Ollama bağlantısı başarısız: " + str(exc)[:250])
+00990 |     await _model_keys_table()
+00991 |     async with db_pool.acquire() as conn:
+00992 |         row = await conn.fetchrow(
+00993 |             "SELECT encrypted_key FROM model_credentials WHERE provider=$1",
+00994 |             data.provider
+00995 |         )
+00996 |     if not row:
+00997 |         raise HTTPException(404, "Bu sağlayıcının API anahtarı henüz kaydedilmedi")
+00998 |     try:
+00999 |         key = _model_cipher().decrypt(row["encrypted_key"].encode()).decode()
+01000 |         from litellm import acompletion
+01001 |         model = MODEL_PROVIDERS[data.provider] + "/" + data.model_name
+01002 |         response = await acompletion(
+01003 |             model=model,
+01004 |             api_key=key,
+01005 |             messages=[{"role": "user", "content": data.prompt}],
+01006 |             max_tokens=120
+01007 |         )
+01008 |         answer = response.choices[0].message.content
+01009 |         return {
+01010 |             "status": "connected",
+01011 |             "provider": data.provider,
+01012 |             "model": data.model_name,
+01013 |             "response": answer
+01014 |         }
+01015 |     except HTTPException:
+01016 |         raise
+01017 |     except Exception as exc:
+01018 |         raise HTTPException(
+01019 |             502, "Model bağlantısı başarısız: " + str(exc)[:300]
+01020 |         )

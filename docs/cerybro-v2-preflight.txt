@@ -1,0 +1,211 @@
+===== DOCKER =====
+NAME               IMAGE                    COMMAND                  SERVICE    CREATED          STATUS                    PORTS
+cerybro-api        cerybro-api              "uvicorn main:app --…"   api        36 minutes ago   Up 36 minutes (healthy)   8000/tcp
+cerybro-postgres   pgvector/pgvector:pg16   "docker-entrypoint.s…"   postgres   17 hours ago     Up 17 hours (healthy)     5432/tcp
+cerybro-redis      redis:7-alpine           "docker-entrypoint.s…"   redis      17 hours ago     Up 17 hours (healthy)     6379/tcp
+===== RESOURCES =====
+               total        used        free      shared  buff/cache   available
+Mem:           7.8Gi       1.7Gi       2.1Gi       142Mi       4.5Gi       6.1Gi
+Swap:          4.0Gi       9.8Mi       4.0Gi
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        96G   50G   47G  52% /
+===== BACKEND FILES =====
+app/backend/Dockerfile
+app/backend/main.py
+app/backend/main.py.backup
+app/backend/main.py.backup-20261101-140532
+app/backend/main.py.bak_ollama_20261101_032533
+app/backend/main.py.bak_ollama_20261101_032807
+app/backend/main.py.before-chat-fix
+app/backend/main.py.cerybro-backup-20261101-182842
+app/backend/requirements.txt
+===== FRONTEND FILES =====
+app/frontend/index.html
+app/frontend/index.html.backup-20261101-133053
+app/frontend/index.html.backup-20261101022839
+app/frontend/index.html.bak_ollama_20261101_032533
+app/frontend/index.html.bak_ollama_20261101_032807
+app/frontend/index.html.before-agent-start
+app/frontend/index.html.before-chat-fix
+===== ROUTES / MODEL / AGENT / SKILL REFERENCES =====
+app/backend/main.py:50:                memory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+app/backend/main.py:88:    memory_enabled: bool = True
+app/backend/main.py:101:    memory_enabled: Optional[bool] = None
+app/backend/main.py:164:@app.get("/api/agents")
+app/backend/main.py:178:@app.get("/api/agents/{agent_id}")
+app/backend/main.py:189:@app.post("/api/agents", status_code=201)
+app/backend/main.py:199:                 model_provider, model_name, memory_enabled, permissions)
+app/backend/main.py:206:                data["memory_enabled"],
+app/backend/main.py:215:@app.patch("/api/agents/{agent_id}")
+app/backend/main.py:225:        "model_provider", "model_name", "memory_enabled",
+app/backend/main.py:266:@app.delete("/api/agents/{agent_id}")
+app/backend/main.py:398:@app.post('/api/tasks', status_code=201)
+app/backend/main.py:418:@app.get('/api/tasks')
+app/backend/main.py:434:@app.get('/api/tasks/{task_id}')
+app/backend/main.py:443:@app.post('/api/tasks/{task_id}/assign')
+app/backend/main.py:462:@app.patch('/api/tasks/{task_id}')
+app/backend/main.py:519:@app.post("/api/tasks", status_code=201)
+app/backend/main.py:541:@app.get("/api/tasks")
+app/backend/main.py:552:@app.get("/api/tasks/{task_id}")
+app/backend/main.py:563:@app.post("/api/tasks/{task_id}/assign")
+app/backend/main.py:583:@app.post("/api/tasks/{task_id}/claim")
+app/backend/main.py:597:@app.post("/api/tasks/{task_id}/complete")
+app/backend/main.py:639:        "ollama": "qwen3:1.7b",
+app/backend/main.py:646:    if provider not in MODEL_PROVIDERS:
+app/backend/main.py:653:            "SELECT encrypted_key FROM model_credentials WHERE provider=$1",
+app/backend/main.py:657:    if provider == "ollama":
+app/backend/main.py:658:        api_key = "ollama"
+app/backend/main.py:664:        api_key = _model_cipher().decrypt(
+app/backend/main.py:672:    model = MODEL_PROVIDERS[provider] + "/" + model_name
+app/backend/main.py:677:    import litellm
+app/backend/main.py:680:    response = await litellm.acompletion(
+app/backend/main.py:693:@app.post("/api/chat")
+app/backend/main.py:767:@app.post("/api/tasks/{task_id}/execute")
+app/backend/main.py:876:@app.get("/api/chat/history")
+app/backend/main.py:901:MODEL_PROVIDERS = {
+app/backend/main.py:907:    "ollama": "ollama"
+app/backend/main.py:910:def _model_cipher():
+app/backend/main.py:919:            CREATE TABLE IF NOT EXISTS model_credentials (
+app/backend/main.py:926:@app.get("/api/models/providers")
+app/backend/main.py:931:            "SELECT provider, updated_at FROM model_credentials ORDER BY provider"
+app/backend/main.py:934:    configured["ollama"] = "local (API anahtarı gerekmez)"
+app/backend/main.py:936:        "supported": list(MODEL_PROVIDERS.keys()),
+app/backend/main.py:938:        "router": "LiteLLM"
+app/backend/main.py:941:@app.put("/api/models/keys/{provider}")
+app/backend/main.py:943:    if provider not in MODEL_PROVIDERS:
+app/backend/main.py:945:    if provider == "ollama":
+app/backend/main.py:946:        return {"status": "saved", "provider": "ollama", "key": "not_required"}
+app/backend/main.py:948:    encrypted = _model_cipher().encrypt(data.api_key.encode()).decode()
+app/backend/main.py:951:            INSERT INTO model_credentials(provider, encrypted_key)
+app/backend/main.py:958:@app.delete("/api/models/keys/{provider}")
+app/backend/main.py:960:    if provider not in MODEL_PROVIDERS:
+app/backend/main.py:965:            "DELETE FROM model_credentials WHERE provider=$1", provider
+app/backend/main.py:969:@app.post("/api/models/test")
+app/backend/main.py:971:    if data.provider not in MODEL_PROVIDERS:
+app/backend/main.py:973:    if data.provider == "ollama":
+app/backend/main.py:975:            from litellm import acompletion
+app/backend/main.py:977:                model=f"ollama_chat/{data.model_name}",
+app/backend/main.py:978:                api_base="http://cerybro-ollama:11434",
+app/backend/main.py:984:                "provider": "ollama",
+app/backend/main.py:989:            raise HTTPException(502, "Ollama bağlantısı başarısız: " + str(exc)[:250])
+app/backend/main.py:993:            "SELECT encrypted_key FROM model_credentials WHERE provider=$1",
+app/backend/main.py:999:        key = _model_cipher().decrypt(row["encrypted_key"].encode()).decode()
+app/backend/main.py:1000:        from litellm import acompletion
+app/backend/main.py:1001:        model = MODEL_PROVIDERS[data.provider] + "/" + data.model_name
+app/frontend/index.html:112:async function cmTestOllama(){
+app/frontend/index.html:116:    const r=await cmReq("/api/models/test",{
+app/frontend/index.html:119:        provider:"ollama",
+app/frontend/index.html:177:const API='/api/agents';
+app/frontend/index.html:317:        const response=await fetch('/api/chat',{
+app/frontend/index.html:366:  const d=await cmReq("/api/models/providers");
+app/frontend/index.html:379:  const local=document.getElementById("cm-provider").value==="ollama";
+app/frontend/index.html:382:  key.placeholder=local?"Ollama için anahtar gerekmez":"API anahtarını buraya gir";
+app/frontend/index.html:389: if(provider==="ollama"){
+app/frontend/index.html:390:    el.textContent="Ollama kaydediliyor...";
+app/frontend/index.html:392:      await cmReq("/api/models/keys/ollama",{method:"PUT",body:JSON.stringify({api_key:"local-ollama-no-key"})});
+app/frontend/index.html:393:      el.textContent="Ollama yerel sağlayıcısı kaydedildi.";
+app/frontend/index.html:405:  await cmReq("/api/models/keys/"+provider,{
+===== DATABASE TABLES =====
+psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: FATAL:  role "postgres" does not exist
+===== API ROUTE MAP =====
+/
+/api/agents
+/api/agents/{agent_id}
+/api/chat
+/api/chat/history
+/api/login
+/api/models/keys/{provider}
+/api/models/providers
+/api/models/test
+/api/tasks
+/api/tasks/{task_id}
+/api/tasks/{task_id}/assign
+/api/tasks/{task_id}/claim
+/api/tasks/{task_id}/complete
+/api/tasks/{task_id}/execute
+/health
+/ready
+===== NGINX =====
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+===== API LOGS =====
+INFO:     127.0.0.1:41964 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36412 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32830 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56134 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55906 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58222 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48920 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44172 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40278 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59186 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46516 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52392 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37662 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33044 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45350 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35678 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59618 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41600 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50948 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55600 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52800 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40338 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49710 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55676 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53532 - "GET /health HTTP/1.1" 200 OK
+INFO:     10.0.4.1:38218 - "POST /api/login HTTP/1.0" 200 OK
+INFO:     10.0.4.1:38226 - "GET /api/agents?include_paused=true HTTP/1.0" 200 OK
+INFO:     127.0.0.1:56636 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52872 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47846 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60574 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43310 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36080 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49480 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43116 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39716 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55572 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52422 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45968 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53966 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34060 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58502 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33640 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37370 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45024 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33042 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50830 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33500 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47094 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53236 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35312 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42290 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45328 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60116 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55296 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58376 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37652 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57070 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39554 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57576 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47116 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52756 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60890 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52072 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54802 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47750 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50098 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59414 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55694 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41622 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55354 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52388 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41914 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58070 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57770 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58936 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44228 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44242 - "GET /openapi.json HTTP/1.1" 200 OK

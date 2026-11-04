@@ -263,7 +263,7 @@ async function cmTestOllama(){
 </div>
 
 <div class="chat" id="chat">
-<div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div><strong id="chatName"></strong><div style="font-size:12px;color:#888">Uzman ajan</div></div></div>
+<div class="chathead"><button class="secondary" onclick="closeChat()">‹</button><div class="avatar" id="chatAvatar"></div><div style="flex:1;min-width:0"><strong id="chatName" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></strong><div style="font-size:12px;color:#888" id="chatSub">Uzman ajan</div></div><button class="secondary" type="button" id="histBtn" title="Geçmiş sohbetler" onclick="openHistory()">🕘</button><button class="primary" type="button" id="newChatBtn" onclick="newChat()">Yeni sohbet</button></div>
 <div class="chatbody"><div class="notice">Cerybro yapay zekâ bağlantısı aktif. Mesajlarını CEO sistemine gönderebilirsin.</div></div>
 <div id="attTray" class="att-tray"></div>
 <div class="chatfoot"><button type="button" id="attBtn" class="att-plus" aria-label="Ek ekle" onclick="toggleAttMenu(event)">+</button><input id="message" placeholder="Mesaj yaz..."><button id="sendBtn" onclick="sendMessage()">Gönder</button></div>
@@ -305,6 +305,7 @@ async function cmTestOllama(){
 <div class="row"><button class="secondary" type="button" onclick="closeDelete()">Vazgeç</button><button class="primary" type="button" id="delGo" disabled style="background:#e5383b" onclick="doDelete()">Sil</button></div>
 </div>
 </div>
+<div class="modal" id="histModal" style="z-index:40"><div class="panel"><h2>Geçmiş sohbetler</h2><div id="histList" style="max-height:60vh;overflow:auto"></div><div class="row"><button class="secondary" type="button" onclick="document.getElementById('histModal').style.display='none'">Kapat</button></div></div></div>
 <div id="toast"></div>
 
 <script>
@@ -407,22 +408,64 @@ if(!confirm('Bu ajanı pasife almak istiyor musun?'))return;
 try{let r=await fetch(API+'/'+id,{method:'DELETE'});if(!r.ok)throw Error();await loadAgents();toast('Ajan pasife alındı')}catch(e){toast('İşlem başarısız')}
 }
 function closeEditor(){document.getElementById('editor').style.display='none'}
-let currentConv='cerybro-ceo';
-function resetChatBody(){const b=document.querySelector('.chatbody');b.innerHTML='<div class="notice">Cerybro yapay zekâ bağlantısı aktif.</div>';pendingAtts=[];renderTray()}
-function openCEOChat(){if(currentConv!=='cerybro-ceo')resetChatBody();currentConv='cerybro-ceo';
-  document.getElementById('chatName').textContent='Cerybro · CEO';
+let currentConv='cerybro-ceo',currentAgentKey='cerybro-ceo';
+function resetChatBody(note){const b=document.querySelector('.chatbody');b.innerHTML='';const n=document.createElement('div');n.className='notice';n.textContent=note||'Yeni sohbet.';b.appendChild(n);pendingAtts=[];renderTray()}
+function renderMsg(role,text,list){const body=document.querySelector('.chatbody');const el=document.createElement('div');
+ if(list&&list.length){const w=document.createElement('div');w.className='msg-atts';list.forEach(a=>{let n;
+  if(a.kind==='image'&&a.url){n=document.createElement('img');n.src=a.url;n.alt=a.name}
+  else if(a.kind==='video'&&a.url){n=document.createElement('video');n.src=a.url;n.controls=true}
+  else{n=document.createElement('span');n.className='att-chip';n.textContent='📄 '+a.name+' · '+fmtSize(a.size)}
+  w.appendChild(n)});el.appendChild(w)}
+ el.className='msg msg-'+role;el.style.cssText='padding:12px;margin:8px 0;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;'+(role==='user'?'background:#e9f0ff;margin-left:12%;':'background:#f1f1f1;margin-right:8%;');
+ if(text){const t=document.createElement('div');t.textContent=text;el.appendChild(t)}
+ body.appendChild(el);body.scrollTop=body.scrollHeight;return el}
+function showSummaryNote(s){if(!s)return;const b=document.querySelector('.chatbody');const n=document.createElement('div');n.className='notice summary-note';n.style.cssText='background:#fff7e6;border:1px solid #f3d19e;padding:10px;border-radius:10px;white-space:pre-wrap;font-size:13px';n.textContent='Önceki sohbetin özeti bağlama eklendi:\n'+s;b.appendChild(n)}
+async function loadSession(sid){currentConv=sid;resetChatBody('Sohbet yükleniyor…');
+ try{const d=await cmReq('/api/chat/history?conversation_id='+encodeURIComponent(sid));resetChatBody(d.session&&d.session.title&&d.session.title!=='Yeni sohbet'?('Sohbet: '+d.session.title):'Yeni sohbet.');
+  if(d.session)showSummaryNote(d.session.seed_summary);(d.messages||[]).forEach(m=>renderMsg(m.role,m.content))}
+ catch(e){resetChatBody('Sohbet yüklenemedi: '+e.message)}}
+async function enterAgent(key){const changed=currentAgentKey!==key;currentAgentKey=key;
+ if(!changed&&document.querySelector('.chatbody .msg, .chatbody .ask-summary'))return;
+ try{const d=await cmReq('/api/chat/sessions?agent_key='+encodeURIComponent(key));
+  if(d.sessions&&d.sessions.length)await loadSession(d.sessions[0].id);else await newChat(true)}
+ catch(e){resetChatBody('Sohbet açılamadı: '+e.message)}}
+async function newChat(silent){try{const d=await cmReq('/api/chat/sessions',{method:'POST',body:JSON.stringify({agent_key:currentAgentKey})});
+  currentConv=d.id;resetChatBody('Yeni sohbet başladı.');
+  if(d.previous_session)askSummary(d.id,d.previous_session);else if(!silent)toast('Yeni sohbet başladı')}
+ catch(e){toast('Yeni sohbet açılamadı: '+e.message)}}
+function askSummary(sid,prev){const el=renderMsg('assistant','Önceki sohbetin özeti alınsın mı?');el.classList.add('ask-summary');
+ const r=document.createElement('div');r.style.cssText='display:flex;gap:8px;margin-top:8px';
+ const y=document.createElement('button');y.className='primary';y.type='button';y.textContent='Evet';
+ const n=document.createElement('button');n.className='secondary';n.type='button';n.textContent='Hayır';
+ y.onclick=async()=>{y.disabled=n.disabled=true;y.textContent='Özet hazırlanıyor…';
+  try{const d=await cmReq('/api/chat/sessions/'+encodeURIComponent(sid)+'/seed',{method:'POST',body:JSON.stringify({from_session:prev})});
+   r.remove();el.querySelector('div').textContent='Önceki sohbetin özeti alındı. Kaldığımız yerden devam edebiliriz.';showSummaryNote(d.summary)}
+  catch(e){y.disabled=n.disabled=false;y.textContent='Evet';toast('Özet alınamadı: '+e.message)}};
+ n.onclick=()=>{r.remove();el.querySelector('div').textContent='Temiz bir sohbetle başlıyoruz.'};
+ r.append(y,n);el.appendChild(r)}
+async function openHistory(){const m=document.getElementById('histModal'),l=document.getElementById('histList');m.style.display='flex';l.textContent='Yükleniyor…';
+ try{const d=await cmReq('/api/chat/sessions?agent_key='+encodeURIComponent(currentAgentKey));l.innerHTML='';
+  if(!d.sessions.length){l.textContent='Henüz kayıtlı sohbet yok.';return}
+  d.sessions.forEach(s=>{const b=document.createElement('button');b.type='button';b.className='secondary hist-item';b.style.cssText='display:block;width:100%;text-align:left;margin:6px 0;padding:10px';
+   const w=s.work_log||{};const t=document.createElement('div');t.style.fontWeight='600';t.textContent=(s.id===currentConv?'● ':'')+(s.title||'Sohbet');
+   const sub=document.createElement('div');sub.style.cssText='font-size:12px;color:#777';sub.textContent=new Date(s.updated_at).toLocaleString('tr-TR')+' · '+s.messages+' mesaj'+((w.biten||[]).length?' · '+w.biten.length+' biten iş':'')+(s.seeded?' · özetten devam':'');
+   b.append(t,sub);b.onclick=()=>{m.style.display='none';loadSession(s.id)};l.appendChild(b)})}
+ catch(e){l.textContent='Hata: '+e.message}}
+function openCEOChat(){
+  document.getElementById('chatName').textContent='Cerybro · CEO';document.getElementById('chatSub').textContent='CEO';
   const av=document.getElementById('chatAvatar');
   av.innerHTML='••';av.style.transform='none';av.style.color='#fff';
   av.style.background='#fa2345';
   av.style.borderRadius='50%';
   document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
+  enterAgent('cerybro-ceo');
 }
 function openChat(id){
 let a=agents.find(x=>x.id===id);if(!a)return;
-if(currentConv!=='agent-'+id)resetChatBody();currentConv='agent-'+id;
-document.getElementById('chatName').textContent=a.name+' · '+a.role;
+document.getElementById('chatName').textContent=a.name+' · '+a.role;document.getElementById('chatSub').textContent='Uzman ajan';
 let av=document.getElementById('chatAvatar');setAvatar(av,a.shape,a.color);
 document.getElementById('chat').style.display='flex';document.documentElement.classList.add('chat-open');document.body.classList.add('chat-open');
+enterAgent('agent-'+id);
 }
 function closeChat(){document.getElementById('chat').style.display='none';document.documentElement.classList.remove('chat-open');document.body.classList.remove('chat-open')}
 
@@ -463,19 +506,7 @@ async function sendMessage(){
         return;
     }
 
-    const addMessage=(role,text,list)=>{
-        const el=document.createElement('div');
-        if(list&&list.length){const w=document.createElement('div');w.className='msg-atts';list.forEach(a=>{let n;
-            if(a.kind==='image'&&a.url){n=document.createElement('img');n.src=a.url;n.alt=a.name}
-            else if(a.kind==='video'&&a.url){n=document.createElement('video');n.src=a.url;n.controls=true}
-            else{n=document.createElement('span');n.className='att-chip';n.textContent='📄 '+a.name+' · '+fmtSize(a.size)}
-            w.appendChild(n)});el.appendChild(w)}
-        el.style.cssText='padding:12px;margin:8px 0;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;'+
-            (role==='user'?'background:#e9f0ff;margin-left:12%;':'background:#f1f1f1;margin-right:8%;');
-        if(text){const t=document.createElement('div');t.textContent=text;el.appendChild(t)}
-        body.appendChild(el);
-        body.scrollTop=body.scrollHeight;
-    };
+    const addMessage=renderMsg;
 
     input.value='';
     addMessage('user',message,atts);
@@ -508,13 +539,14 @@ async function sendMessage(){
 
 
 let delId=null,delName='';
-async function openDelete(id){const a=agents.find(x=>x.id===id);if(!a)return;delId=id;delName=a.name;
+async function openDelete(id){const a=id==='ceo'?{name:'Cerybro'}:agents.find(x=>x.id===id);if(!a)return;delId=id;delName=a.name;
+ document.getElementById('delAll').parentElement.querySelector('b').textContent=id==='ceo'?'Cerybro verilerini tamamen sil':'Ajanı tamamen sil';
  document.getElementById('delTitle').textContent='Ajanı sil: '+a.name;document.getElementById('delNameHint').textContent=a.name;
  document.getElementById('delConfirm').value='';document.getElementById('delAll').checked=false;document.getElementById('delStatus').textContent='';
  document.getElementById('delCats').textContent='Yükleniyor…';document.getElementById('delModal').style.display='flex';
- try{const d=await cmReq('/api/agents/'+id+'/data');
+ try{const d=await cmReq(id==='ceo'?'/api/ceo/data':'/api/agents/'+id+'/data');
   document.getElementById('delCats').innerHTML=Object.entries(d.categories).map(([k,v])=>`<label class="delrow"><input type="checkbox" class="delcat" value="${k}" onchange="delCheck()"> ${esc(v.label)}<span class="cnt">${k==='settings'?'':v.count+' kayıt'}</span></label>`).join('');
-  document.getElementById('delKept').textContent='Silinmeyecekler: CEO, diğer ajanlar, ortak sistem yedekleri ve ayarları.'+(d.kept.tasks_unassigned?' Bu ajana atanmış '+d.kept.tasks_unassigned+' görev silinmez, atamasız kalır.':'');
+  document.getElementById('delKept').textContent=id==='ceo'?'Silmeden önce tam yedek alınır. Diğer ajanlar, görevler, API anahtarları ve parmak izleri silinmez. Son adımda parmak izi onayı istenir (60 sn, tek kullanımlık).':'Silinmeyecekler: CEO, diğer ajanlar, ortak sistem yedekleri ve ayarları.'+(d.kept.tasks_unassigned?' Bu ajana atanmış '+d.kept.tasks_unassigned+' görev silinmez, atamasız kalır.':'');
  }catch(e){document.getElementById('delCats').textContent='Hata: '+e.message}
  delCheck()}
 function closeDelete(){document.getElementById('delModal').style.display='none'}
@@ -523,6 +555,11 @@ function delCheck(){const any=document.getElementById('delAll').checked||[...doc
  document.getElementById('delGo').disabled=!(any&&document.getElementById('delConfirm').value.trim()===delName)}
 async function doDelete(){const all=document.getElementById('delAll').checked;const cats=[...document.querySelectorAll('.delcat:checked')].map(c=>c.value);
  const st=document.getElementById('delStatus');st.textContent='Siliniyor…';document.getElementById('delGo').disabled=true;
+ if(delId==='ceo'){try{const o=await cmReq('/api/ceo/delete/options',{method:'POST'});st.textContent='Parmak izini onayla…';
+   const cred=await navigator.credentials.get({publicKey:wa.reqOpts(o.options)});
+   await cmReq('/api/ceo/delete',{method:'POST',body:JSON.stringify({challenge_id:o.challenge_id,credential:wa.toJSON(cred),categories:cats,delete_all:all,confirm_name:document.getElementById('delConfirm').value.trim()})});
+   closeDelete();currentAgentKey='';toast('Cerybro verileri silindi (tam yedek 7 gün saklanır)')}
+  catch(e){st.textContent='Hata: '+(e.name==='NotAllowedError'?'Parmak izi iptal edildi.':e.message);delCheck()}return}
  try{const d=await cmReq('/api/agents/'+delId+'/purge',{method:'POST',body:JSON.stringify({categories:cats,delete_agent:all,confirm_name:document.getElementById('delConfirm').value.trim()})});
   closeDelete();await loadAgents();toast(all?'Ajan silindi (yedek 7 gün saklanır)':'Seçilen veriler silindi');
  }catch(e){st.textContent='Hata: '+e.message;delCheck()}}
@@ -730,6 +767,7 @@ window.addEventListener('load',()=>{setupChoices();loadAgents();offerPasskey();}
 
     <div id="cerybro-ceo-status" class="cc-status"></div>
     <div class="cc-actions">
+      <button class="cc-close" type="button" style="color:#e5383b" onclick="closeCerybroCEOSettings();openDelete('ceo')">Cerybro'yu sil ☝</button>
       <button class="cc-close" onclick="closeCerybroCEOSettings()">Kapat</button>
       <button class="cc-save" onclick="saveCerybroCEOSettings()">Kaydet</button>
     </div>
